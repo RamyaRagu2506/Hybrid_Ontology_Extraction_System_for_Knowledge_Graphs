@@ -1,0 +1,2089 @@
+File Name,Page Number,Text
+2305.05422v1.pdf,1,"L. Erculiani et al. /
+Egocentric Hierarchical Visual Semantics
+Luca ERCULIANI a, Andrea BONTEMPELLI a,1, Andrea PASSERINIa, and
+Fausto GIUNCHIGLIA a
+a University of Trento
+Abstract. We are interested in aligning how people think about objects and what
+machines perceive, meaning by this the fact that object recognition, as performed
+by a machine, should follow a process which resembles that followed by humans
+when thinking of an object associated with a certain concept. The ultimate goal is
+to build systems which can meaningfully interact with their users, describing what
+they perceive in the users’ own terms. As from the ﬁeld of Lexical Semantics, hu-
+mans organize the meaning of words in hierarchies where the meaning of, e.g., a
+noun, is deﬁned in terms of the meaning of a more general noun, its genus, and of
+one or more differentiating properties, itsdifferentia. The main tenet of this paper is
+that object recognition should implement a hierarchical process which follows the
+hierarchical semantic structure used to deﬁne the meaning of words. We achieve
+this goal by implementing an algorithm which, for any object, recursively recog-
+nizes its visual genus and its visual differentia. In other words, the recognition of
+an object is decomposed in a sequence of steps where the locally relevant visual
+features are recognized. This paper presents the algorithm and a ﬁrst evaluation.
+Keywords. Genus and Differentia, visual semantics, interactive machine learning
+1. Introduction
+Lexical Semantics studies how word meanings, i.e., linguistic concepts [1,2] are formed,
+where these concepts are assumed to be constructed by humans through language. As
+from this ﬁeld, humans organize the meaning of words in hierarchies where the meaning
+of, e.g., a noun, is deﬁned in terms of a more general noun, its Genus, and of one
+or more differentiating properties, its Differentia. Thus for instance, a guitar is a
+stringed (musical) instrument with six strings [3]. The main tenet of the work described
+in this paper is that object recognition should implement a process which progressively
+visually reconstructs the hierarchical semantic structure used to deﬁne the meaning of
+words. Only in this way it is possible to have a full one-to-one alignment between how
+people think of the world and, ultimately, human language, and machine perception.
+The ultimate goal is to build systems which can meaningfully interact with their users,
+describing what they perceive in the users’ own terms. Notice how this is a well known,
+still unsolved problem, the so calledSemantic Gap problem, which was identiﬁed in 2010
+[4] as (quote) “... the lack of coincidence between the information that one can extract
+from the visual data and the interpretation that the same data have for a user in a given
+situation.”.
+Based on the work in the ﬁeld of Teleosemantics [5], see in particular the work
+in [6,7,8,9], the ﬁeld of Visual Semantics has been introduced as the study of how hu-
+1Corresponding Author: Andrea Bontempelli, andrea.bontempelli@unitn.it
+arXiv:2305.05422v1  [cs.AI]  9 May 2023"
+2305.05422v1.pdf,2,"L. Erculiani et al. /
+Musical instrumentsG: deviceD: with sound mechanism
+Keyboard instrumentG: musical instrumentD: with keyboard
+String instrumentG: musical instrumentD: with taut strings
+KotoG: string instrumentD: with 13 strings
+GuitarG: string instrumentD: with 6 strings
+Electric guitarG: guitarD: with input jack
+Acoustic guitarG: guitarD: without input jack
+DulcimerG: string instrumentD: elliptical body, 3 or 4strings
+Wind instrumentG: musical instrumentD: with embouchure
+Figure 1. A classiﬁcation concept hierarchy for Musical Instruments [13]. Left: Lexical semantic hierarchy
+and Genus (G) and Differentia (D) of each concept. Right: Visual semantic hierarchy.
+mans build concepts when using vision to perceive objects in the world [10]. Accord-
+ing to this line of work, objects should be recognized by recognizing ﬁrst their genus
+and then their differentia, as visually represented in the input images or videos. Thus,
+for instance, a guitar should be recognized ﬁrst as a stringed instrument (Genus),
+which is itself a musical instrument with strings, and then by recognizing its six strings
+(Differentia) [3,2]. This clearly leads to a recursive recognition process where the
+set of possible objects gets progressively restricted to satisfy more and more reﬁned dif-
+ferentiae. In the most general case, the root node is the conceptobject itself, namely any-
+thing that can be detected as such, e.g., via a bounding box. In this context, we adopt an
+egocentric point-of-view with respect to a speciﬁc person [11,12].
+As an example consider Fig. 1, taken from a small classiﬁcation of musical instru-
+ments [13]. In this ﬁgure (left), we can see how the meaning of each label is provided
+in terms of a genus and a differentia, and where the genus one level down is the label
+of the concept the level up. Dually in the ﬁgure (right), we can see how all the images
+clearly show the differentia that allows to differentiate the object one level down from
+the object one level up (as having an extra feature, i.e., the visual differentia) and from
+all the siblings (as all objects under the same visual genus have a different visual differ-
+entia). Notice how, in current hierarchical computer vision tasks, the hierarchy is usually
+a-priori and static, e.g., [14], and does not consider the users’ language and its mapping
+to their visual perception (see, e.g., [15,16]), leading therefore to a human-machine mis-
+alignment. For instance, a non-expert user would correctly classify the Koto instrument
+in Fig. 1 as a stringed instrument but, differently from a musician, would not describe
+it using its name, thus having two different but consistent linguistic descriptions of the
+same image.
+The main goal of this paper presents a general algorithm which aligns machine per-
+ception and human description. The algorithm is based on two key ideas:
+• Object recognition is implemented following a hierarchical decomposition pro-
+cess where the uniquely identifying features of the input object (the differentia)
+are recognized following the same order that is used in constructing the meaning
+of the label naming the object.
+• Object recognition follows an egocentric, incremental approach where the user
+progressively reﬁnes the level of detail at which an object is recognized.
+The work in [10] introduced visual semantics in the base hierarchy-less case. This paper
+extends this work to hierarchies of any depth. We do this by leveraging Extreme Value"
+2305.05422v1.pdf,3,"L. Erculiani et al. /
+v1
+ v2
+ v3
+E
+Figure 2. Example of an encounter. The video contains eight frames of a power strip gradually rotated over
+time on a white background. Similar adjacent frames are aggregated in three visual objects, which form the
+encounter E [10]. For better visualization, each visual object is represented, here and below, as its ﬁrst frame.
+E1
+E2
+OS
+O2
+O1
+Figure 3. Left: An object made of two distinct encounters (dashed line), with their similar visual objects
+connected in green. Right: Two distinct objects sharing the same genus (via the visual objects connected in
+green). Red visual objects are the differentia (i.e., different tape on the back side).
+Machines [17], a principled approach to open set problems which allows to implement
+differentia-based object recognition. The source code of the algorithm, the dataset and
+all the material necessary to reproduce the experiments are freely available online.2
+2. Visual Semantics
+We inherit from [10] the following foundational notions. An encounter E is an event
+during which a user sees an object. We computationally model an encounter as one or
+more visual objects, where a visual object consists of a sequence of adjacent frames that
+are similar to each other. Fig. 2 shows an example of an encounter with its decomposi-
+tion into visual objects. An object O is a collection of encounters that are perceived to
+represent the same concept.
+The left part of Fig. 3 shows an object consisting of two encounters, with the visual
+objects that make the two encounters similar highlighted in green. Two encounters that
+have at least a pair of visual objects that are similar are said to share the same Genus.
+Two encounters with the same Genus could or could not be associated with the same
+object. What makes this decision is the presence (or the absence) of a Differentia,
+i.e., a pair of visual objects that identiﬁes the two encounters as representing two distinct
+objects. The right part of Fig. 3 visually presents these concepts. The visual objects con-
+2https://github.com/lucaerculiani/hierarchical-objects-learning."
+2305.05422v1.pdf,4,"L. Erculiani et al. /
+Algorithm 1The main loop of the framework.
+1: procedure MAIN
+2: while True do
+3: E ←PERCEIVE ()
+4: Oe ←PREDICT GENUS (E)
+5: while notGENUS OF(E,Oe) do
+6: Oe ←PARENT (Oe)
+7: REFINE GENUS (Oe,E)
+nected in green indicate that the two objects share the same Genus, while those circled
+in red are their Differentia, and indicate that they are distinct objects. The intuition
+is that some partial views of the objects determine their Genus and Differentia
+respectively. The hierarchyHorganizes the objects, modeled as visual objects, in a tree-
+like structure, which outlines the subsumption relationships between the objects in terms
+of Genus and Differentia (see, e.g., Fig. 1).
+3. Building an Egocentric Visual Semantic Hierarchy
+The visual hierarchy is built incrementally as the objects are perceived. The interaction
+with the user ensures that the visual hierarchy matches the user lexical semantics. The
+proposed framework consists of a cyclic procedure in which at each iteration a new
+encounter (a sequence depicting an object) is shown to the model. The model then asks
+the user a series of queries over the Genus and Differentia of the new encounter
+with respect to some of the objects that were seen in the past by the algorithm (which are
+stored in its internal memory). Via this interaction, the user can guide the algorithm to
+assign the new encounter to the correct position inside the machine’s knowledge base.
+The main loop. Algorithm 1 lists the pseudo-code of the inﬁnite learning loop that takes
+as input a new sequence at each iteration. This new sequence is ﬁrst forwarded to an
+embedding algorithm that converts the video sequence, currently encoded as a series of
+frames, into a collection of visual objects (i.e. the encounter E). In this step, we employ
+an unsupervised deep neural network, pre-trained on a self-supervised class-agnostic
+task [18]. This training approach ensures that the embeddings are not explicitly biased
+towards the classes. Then, the P REDICT GENUS procedure searches in its memory for
+the most speciﬁc Genus Oe for encounter E, driven by its similarity with previously
+encountered objects. Starting from Oe, it interacts with the user to ﬁnd the right position
+of the encounter, possibly updating the hierarchy during the process. First, the user could
+say that Oe is not a Genus of E(meaning that their common Genus is further up in the
+hierarchy). If this is the case, the algorithm goes up through the hierarchy until it ﬁnds
+a valid Genus for the encounter. This is reﬁned by further interacting with the user via
+the REFINE GENUS procedure. The two procedures are detailed below.
+Genus prediction. The P REDICT GENUS procedure outlined in Algorithm 2 continu-
+ously performs open-world recognition over the evolvingHof objects seen so far by the
+machine. The task is to predict the most speciﬁc node Oe in Hof the current encounter
+E. The algorithm computes also the probability pe that E belongs to Oe. For every vi-
+sual object v of the current encounter, the candidate Genus is identiﬁed. Then, the al-"
+2305.05422v1.pdf,5,"L. Erculiani et al. /
+Algorithm 2The procedure predicting Genus of an encounter.
+1: function PREDICT GENUS (E)
+2: Oe ←GET ROOT(H)
+3: pe ←1.0
+4: for v∈Edo
+5: Ov,pv = PREDICT VOGENUS (v,GET ROOT(H),1.0)
+6: if Oe = GET ROOT(H) ∨pe <pv then
+7: Oe ←Ov
+8: pe ←pv
+9: return ⟨Oe,pe⟩
+10:
+11: function PREDICT VOGENUS (v,Ov,pv)
+12: λ←GET REJECTION TRESHOLD (K)
+13: C← GET CHILDREN (Ov)
+14: pc∗ ←maxOc∈C PROBABILITY (Oc,v)
+15: Oc∗ ←argmax Oc∈C PROBABILITY (Oc,v)
+16: if pc∗ >λ then
+17: return PREDICT VOGENUS (v,Oc∗ ,pc∗ )
+18: else
+19: return ⟨Ov,pv⟩
+gorithm outputs the one with maximal probability (excluding the root node, which has
+always probability 1.0). The procedure P REDICT VOGENUS in Algorithm 2 computes
+the Genus of a visual object by navigating down the hierarchy. By leveraging the notion
+of Genus and Differentia, the algorithm searches for the most speciﬁc node that
+represents the current visual object. Starting from the root of the hierarchy, it computes
+the most probable genus child Oc∗ for the visual object. If its probability pc∗ exceeds a
+rejection threshold λ, the procedure recurs over it, otherwise it stops returning its parent
+as the Genus of the visual object. Following [11], the rejection threshold is chosen with
+an optimization procedure that maximizes the number of correct predictions given the
+previous feedback by the user (stored in a supervision memoryK). See the original paper
+for the details. The procedure terminates when the most probable node is either below
+the threshold or is a leaf.
+The probability of a Genus being the genus of a visual object can be formalized
+as the probability that an element belongs to a set (the set of previous visual objects for
+that Genus). To compute this inclusion probability, we employed the Extreme Value
+Machine (EVM) framework [17], because of its soundness and practical effectiveness.
+Basically each node is associated with a set of examples, called extreme vectors, that are
+used as representatives of the corresponding Genus. We use as extreme vectors all the
+visual objects associated with any of the nodes in the subtree of the node. The probability
+for a new visual object is computed based on the closest extreme vector and its associated
+probability distribution (a Weibull distribution).
+Genus reﬁnement. Starting from the most speciﬁc Genus for the encounter Ethat has
+been identiﬁed by the machine and conﬁrmed by the user (called the current Genus
+and corresponding to ”thing” in the simplest case), the algorithm traverses the hierarchy
+down asking questions to the user to further reﬁne the Genus for E. Fig. 4 presents a"
+2305.05422v1.pdf,6,"L. Erculiani et al. /
+currentGenus candidateGenusE new encounter
+The candidateGenus
+is a validGenus
+for the encounter
+O1 O2 ...
+E The candidateGenus
+becomes the new
+currentGenus.
+The search continues
+on its subtree O1 O2 ...
+E
+The currentGenus
+is the most speciﬁc
+Genusfor the
+encounter
+O1 O2 ...
+E Add the encounter
+as a new leaf
+of the currentGenus
+O1 O2 E ...
+There is noDifferentia
+between the candidate
+Genusand the encounter.
+The candidateGenus
+is a leaf O1 O2 ...
+E Add the encounter
+to the set of encounters
+of the currentGenus
+O1,E O2 ...
+The candidateGenus
+has aGenusin common
+with the encounter
+that has aDifferentia
+with the currentGenusO1 O2 ...
+E Create a newGenus
+between current
+and candidateGenus.
+Add the encounter
+as its leaf O1 O2
+E
+...
+Preconditions Action
+Figure 4. Representation of four possible choices that can be taken during the iterative encounter procedure.
+graphical representation of the four possible situations at each iteration of the algorithm,
+and the action to be taken as a result of the user feedback. The new encounter is depicted
+in red, the current Genus (current best guess for Genus) in cyan, while the green node
+is the Genus for which the machine is asking queries. For each of the possible actions,
+each row in the table shows the preconditions that must be met in terms of Genus and
+Differentia between the encounter, the candidate Genus and the current Genus,
+and the effect that each action has on the inner hierarchy of the machine. The REFINE -
+GENUS procedure consists of a sequence of questions and corresponding actions, as re-
+ported in Fig. 4, until one of the actions results in placing the new encounter E in the
+hierarchy (one of the two lower actions in the ﬁgure).
+4. Experiments
+The goal is to evaluate how much the hierarchy built by the machine is aligned with
+the user hierarchy. This evaluation is done by measuring the distance in the hierarchy
+between the predicted Genus and the user desired Genus. The greater the distance, the
+greater the misalignment. All experiments were implemented in Python3 and PyTorch.
+Data set. We used a collection of objects organized in a perfectly balanced hierarchy of
+4 levels, such that each node (except for the leaves) inside the hierarchy has 3 children,
+leading to a total of 34 = 81 leaves. Each object was recorded 5 different times while"
+2305.05422v1.pdf,7,"L. Erculiani et al. /
+Figure 5. Comparison between naive model and PREDICT GENUS in terms of geodesic distances between the
+predicted and the correct Genus.
+rotated or deformed against a uniform background, thus obtaining 405 encounters. The
+hierarchy was used to simulate the supervision of the user.
+Experimental details. The whole set of videos in the dataset is presented to the machine
+in random order. An agent simulates the user and provides supervision to the model by
+comparing the ground-truth hierarchy of the data set against the hierarchy of the machine,
+and replying to the queries of the algorithm accordingly (see Fig. 4). The hierarchy of
+objects that is built over time is always consistent with the ground truth. The machine
+goal is to minimize the categorization effort required from the user when a new encounter
+must be placed into the hierarchy. The machine suggests the starting node, from which
+the user navigates down the hierarchy until the correct node is found. The closer the
+prediction of the machine is to the ground-truth node, the lower the effort of the user.
+The performance is evaluated in terms of geodesic distance, namely the number of
+edges in the shortest path between the predicted node and the target node selected by
+the user. Even if this measure is affected by the size of the hierarchy (the deeper the
+tree, the greater the average distance between couples of nodes), due to the fact that the
+evolution of the hierarchy is completely guided by the user, any model has always its
+hierarchy updated in the same way. This fact keeps this performance measure unbiased
+in the context of this experiment. We compare the performance P REDICT GENUS with
+that of a naive algorithm that always suggests the root of Has the starting node.
+Results. Fig. 5 reports the geodesic distance when varying the number of iterations of
+the algorithm, averaged over 100 runs with different random orderings of the objects. Our
+model, shown in red, substantially outperforms the naive algorithms (in blue), with the
+difference becoming more pronounced as the number of observed objects increases. Af-
+ter an initial phase in which the cost increases due to the rapid expansion of the hierarchy,
+the average geodesic distance for PREDICT GENUS starts to decrease (at roughly 60 iter-
+ations). The algorithm suggests starting nodes closer to the correct node with higher ac-
+curacy because the increasing amount of encounters allows to better model eachGenus.
+In contrast, the naive algorithm converges toward an average cost that is equal to the
+average distance between the root node and the leaves (the hierarchy of the dataset is
+composed by four levels). Notice that a particularly bad predictor could in principle do
+worse than the naive algorithm, by predicting a node in a subtree that is more distant
+than the root node. Albeit preliminary, these results conﬁrm the potential of the proposed
+framework in correctly acquiring the hierarchy of the user and its semantics in terms of
+Genus and Differentia."
+2305.05422v1.pdf,8,"L. Erculiani et al. /
+5. Related work
+Our work implements an egocentric, incremental object recognition. A closely related
+area is continual learning, which addresses the problem of learning to recognize novel ob-
+jects without forgetting previous knowledge [19]. Traditional machine learning assumes
+a closed-world setting, where the set of classes is deﬁned at training time. Open set ap-
+proaches reject examples belonging to unknown unknown classes [20]. Studies on open
+world recognition extend open set by incrementally updating the model to incorporate
+the new classes [21,22,23].
+In many real-world tasks, such as gene classiﬁcation and music genre recogni-
+tion [24], the target labels have hierarchical relationships. In computer vision, [15,16]
+tackle hierarchical novelty detection by identifying to which node in the hierarchy the
+novel class is attached. Hierarchical information has been used to achieve more reason-
+able classiﬁcation errors [25,14] or integrated into neural networks [26,27]. These works
+differ in that do not consider the semantic and egocentric aspects.
+In the works on visual-semantic embeddings, the idea is to map the input feature
+space to a semantic embedding space [28,29], for instance by projecting the images and
+the knowledge graph into a uniﬁed representation [30]. [31] learns object attributes, both
+semantic (part of the objects) and non-semantic (visual feature space), from annotations
+to classify images. These approaches differ in that they neither try to align recognition
+with lexical semantics nor use hierarchical classiﬁcations.
+The approaches that study the grounding of human language in perception, espe-
+cially vision [32], are strongly related to our work. Examples in this ﬁeld are answer-
+ing questions grounded on visual images [33], image captioning [34], visual common-
+sense [35] and visual reasoning with natural language [36]. These approaches do not
+leverage the work done in lexical semantics to drive the object recognition process.
+6. Conclusion
+In this paper, we have introduced a novel approach where objects are recognized follow-
+ing the same hierarchical process that is used in lexical semantics to provide meaning
+to the nouns used to name objects. The ﬁrst set of experiments shows a consistent im-
+provement in the alignment between what the system recognizes and the words used by
+humans to describe what is being recognized.
+Acknowledgments
+This research has received funding from the European Union’s Horizon 2020 FET Proac-
+tive project “WeNet - The Internet of us”, grant agreement No. 823783, and from “DEL-
+Phi - DiscovEring Life Patterns” project funded by the MIUR Progetti di Ricerca di Ril-
+evante Interesse Nazionale (PRIN) 2017 – DD n. 1062 del 31.05.2019. The research of
+AP was partially supported by TAILOR, a project funded by EU Horizon 2020 research
+and innovation programme under GA No 952215."
+2305.05422v1.pdf,9,"L. Erculiani et al. /
+References
+[1] Kuang Z, Yu J, Li Z, Zhang B, Fan J. Integrating multi-level deep learning and concept ontology for
+large-scale visual recognition. Pattern Recognition. 2018;78:198-214.
+[2] Giunchiglia F, Batsuren K, Bella G. Understanding and Exploiting Language Diversity. In: IJCAI; 2017.
+p. 4009-17.
+[3] Miller GA, Beckwith R, Fellbaum C, Gross D, Miller KJ. Introduction to WordNet: An on-line lexical
+database. International journal of lexicography. 1990;3(4):235-44.
+[4] Smeulders A, Worring M, Santini S, Jain R. Content-based image retrieval at the end of the early years.
+IEEE Transactions on PAMI. 2000;22(12):1349-80.
+[5] Macdonald G, Papineau D, et al. Teleosemantics. Oxford University Press; 2006.
+[6] Millikan RG. Language, thought, and other biological categories: New foundations for realism. MIT
+press; 1984.
+[7] Millikan RG. A more plausible kind of “recognitional concept”. Philosophical Issues. 1998;9:35-41.
+[8] Millikan RG. On clear and confused ideas: An essay about substance concepts. Cambridge University
+Press; 2000.
+[9] Millikan RG. Language: A biological model. Oxford University Press on Demand; 2005.
+[10] Giunchiglia F, Erculiani L, Passerini A. Towards visual semantics. SN Computer Science. 2021;2(6):1-
+17.
+[11] Erculiani L, Giunchiglia F, Passerini A. Continual egocentric object recognition. ECAI. 2020.
+[12] Smith LB, Slone LK. A Developmental Approach to Machine Learning? Frontiers in Psychology.
+2017;8.
+[13] Giunchiglia F, Bagchi M, Diao X. Aligning Visual and Lexical Semantics. In: 18th International Con-
+ference on Information (iConference). Springer; 2023. Available from:https://arxiv.org/abs/
+2212.06629.
+[14] Bertinetto L, Mueller R, Tertikas K, Samangooei S, Lord NA. Making better mistakes: Leveraging class
+hierarchies with deep networks. In: Proceedings of the IEEE/CVF conference on computer vision and
+pattern recognition; 2020. p. 12506-15.
+[15] Lee K, Lee K, Min K, Zhang Y , Shin J, Lee H. Hierarchical novelty detection for visual object recog-
+nition. In: Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition; 2018.
+.
+[16] Ruiz I, Serrat J. Hierarchical novelty detection for trafﬁc sign recognition. Sensors. 2022.
+[17] Rudd EM, Jain LP, Scheirer WJ, Boult TE. The extreme value machine. TPAMI. 2018.
+[18] Caron M, Bojanowski P, Mairal J, Joulin A. Unsupervised pre-training of image features on non-curated
+data. In: ICCV; 2019. .
+[19] De Lange M, Aljundi R, Masana M, Parisot S, Jia X, Leonardis A, et al. A continual learning survey: De-
+fying forgetting in classiﬁcation tasks. IEEE transactions on pattern analysis and machine intelligence.
+2021.
+[20] Scheirer WJ, de Rezende Rocha A, Sapkota A, Boult TE. Toward open set recognition. IEEE transac-
+tions on pattern analysis and machine intelligence. 2012.
+[21] Bendale A, Boult TE. Towards open world recognition. In: CVPR; 2015. .
+[22] De Rosa R, Mensink T, Caputo B. Online open world recognition. arXiv preprint arXiv:160402275.
+2016.
+[23] Geng C, Huang Sj, Chen S. Recent advances in open set recognition: A survey. IEEE transactions on
+pattern analysis and machine intelligence. 2020.
+[24] Simeone P, Santos-Rodr ´ıguez R, McVicar M, Lijfﬁjt J, De Bie T. Hierarchical novelty detection. In:
+Advances in Intelligent Data Analysis XVI: 16th International Symposium, IDA 2017, London, UK,
+October 26–28, 2017, Proceedings 16. Springer; 2017. .
+[25] Deng J, Krause J, Berg AC, Fei-Fei L. Hedging your bets: Optimizing accuracy-speciﬁcity trade-offs in
+large scale visual recognition. In: 2012 IEEE Conference on Computer Vision and Pattern Recognition;
+2012. .
+[26] Deng J, Ding N, Jia Y , Frome A, Murphy K, Bengio S, et al. Large-scale object classiﬁcation using label
+relation graphs. In: Computer Vision–ECCV 2014: 13th European Conference, Zurich, Switzerland,
+September 6-12, 2014, Proceedings, Part I 13. Springer; 2014. .
+[27] Nauta M, Van Bree R, Seifert C. Neural prototype trees for interpretable ﬁne-grained image recognition.
+In: Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition; 2021. p.
+14933-43."
+2305.05422v1.pdf,10,"L. Erculiani et al. /
+[28] Fu Y , Dong H, Ma Yf, Zhang Z, Xue X. V ocabulary-informed extreme value learning. arXiv preprint
+arXiv:170509887. 2017.
+[29] Zhao H, Puig X, Zhou B, Fidler S, Torralba A. Open vocabulary scene parsing. In: Proceedings of the
+IEEE International Conference on Computer Vision; 2017. .
+[30] Lonij V , Rawat A, Nicolae MI. Open-world visual recognition using knowledge graphs. arXiv preprint
+arXiv:170808310. 2017.
+[31] Farhadi A, Endres I, Hoiem D, Forsyth D. Describing objects by their attributes. In: 2009 IEEE confer-
+ence on computer vision and pattern recognition. IEEE; 2009. .
+[32] Baroni M. Grounding distributional semantics in the visual world. Language and Linguistics Compass.
+2016.
+[33] Bernardi R, Pezzelle S. Linguistic issues behind visual question answering. Language and Linguistics
+Compass. 2021.
+[34] Hodosh M, Young P, Hockenmaier J. Framing image description as a ranking task: Data, models and
+evaluation metrics. Journal of Artiﬁcial Intelligence Research. 2013.
+[35] Zellers R, Bisk Y , Farhadi A, Choi Y . From recognition to cognition: Visual commonsense reasoning.
+In: Proceedings of the IEEE/CVF conference on computer vision and pattern recognition; 2019. .
+[36] Suhr A, Zhou S, Zhang A, Zhang I, Bai H, Artzi Y . A Corpus for Reasoning about Natural Language
+Grounded in Photographs. In: Proceedings of the 57th Annual Meeting of the Association for Compu-
+tational Linguistics. Association for Computational Linguistics; 2019. ."
+A_Conceptual_Model_for_Implementing_Explainable_AI.pdf,1,"  
+A Conceptual Model for Implementing 
+Explainable AI by Design:  
+Results of an Empirical Study 
+Martin VAN DEN BERGa,1, Ouren KUIPERa, Yvette VAN DER HAASa,  
+Julie GERLINGSb, Danielle SENTa, and Stefan LEIJNEN 
+a 
+a
+ Research Group Artificial Intelligence, HU University of Applied Sciences Utrecht 
+bDepartment of Digitalization, Copenhagen Business School 
+ORCiD ID: Martin VAN DEN BERG https://orcid.org/0000-0003-3974-7374,  
+Ouren KUIPER https://orcid.org/0000-0002-5033-6173, Yvette VAN DER HAAS 
+https://orcid.org/0000-0002-0887-3979, Julie GERLINGS https://orcid.org/0000-0003-
+3776-5341, Danielle SENT https://orcid.org/0000-0002-4703-5345, 
+Stefan LEIJNEN https://orcid.org/0000-0002-4411-649X 
+Abstract. Artificial Intelligence (AI) offers organizations unprecedented 
+opportunities. However, one of the risks of using AI is that its outcomes and inner 
+workings are not intelligible. In industries where trust is critical, such as healthcare 
+and finance, explainable AI (XAI) is a necessity. However, the implementation of 
+XAI is not straightforward, as it requires addressing both technical and social 
+aspects. Previous studies on XAI primarily focused on either technical or social 
+aspects and lacked a practical perspective. This study aims to empirically examine 
+the XAI related aspects faced by developers, users, and managers of AI systems 
+during the development process of the AI system. To this end, a multiple case study 
+was conducted in two Dutch financial services companies using four use cases. Our 
+findings reveal a wide range of aspects that must be considered during XAI 
+implementation, which we grouped and integrated into a conceptual model. This 
+model helps practitioners to make informed decisions when developing XAI. We 
+argue that the diversity of aspects to consider necessitates an XAI “by design” 
+approach, especially in high-risk use cases in industries where the stakes are high 
+such as finance, public services, and healthcare. As such, the conceptual model 
+offers a taxonomy for method engineering of XAI related methods, techniques, and 
+tools.  
+Keywords. Explainable AI (XAI), explainability, financial services, conceptual 
+model 
+1. Introduction 
+Artificial Intelligence (AI) nowadays has an increasing large impact on individuals and 
+organizations. AI offers organizations unprecedented opportunities to automate, 
+optimize, generate insights, and create human-like interactions [1,2]. Despite its 
+advantages, AI also comes with multiple risks. One such risk is that outcomes and 
+processes of AI systems are not intelligible for humans [1,3]. With the rise of new AI 
+ 
+1 Corresponding Author: Martin van den Berg, martin.m.vandenberg@hu.nl. 
+HHAI 2023: Augmenting Human Intellect
+P. Lukowicz et al. (Eds.)
+© 2023 The Authors.
+This article is published online with Open Access by IOS Press and distributed under the terms
+of the Creative Commons Attribution Non-Commercial License 4.0 (CC BY-NC 4.0).
+doi:10.3233/FAIA230075
+60"
+A_Conceptual_Model_for_Implementing_Explainable_AI.pdf,2,"  
+techniques, such as neural networks, AI models have become increasingly complex and 
+opaque, making it hard to determine how they operate. This, along with legal 
+requirements for the right to an explanation [4,5] has led to the emergence of explainable 
+AI (XAI) [3,6,7]. 
+XAI focuses on generating explanations in a way that AI systems are transparent 
+and understandable [3,6]. XAI is intended to increase trust and acceptance of AI systems 
+among stakeholders such as customers, regulators, and users. This can be achieved by 
+examining to what extent stakeholders understand the decisions of an AI system and by 
+explicitly explaining the decisions to stakeholders [8]. The explainability of AI systems 
+is seen as one of the building blocks of the responsible use of AI as it helps explain how 
+an AI system works and, as such, supports the detection of bias, fairness, and 
+discrimination [9,10]. Explainability of the outcomes and functioning of AI systems is 
+particularly important in industries where trust plays a crucial role, such as healthcare 
+and finance [11].  
+The implementation of XAI is not straightforward [12]. On the one hand, it requires 
+knowledge and understanding of how AI systems work and, on the other hand, insight 
+and understanding of the explanability requirements of the stakeholders. Both technical 
+and social aspects deserve attention [13,14,15]. Technical aspects focus on integrating 
+explainability into an AI system. Social aspects focus on integrating explanations into 
+decision making processes and how to convey explanations to stakeholders. Different 
+studies focus on either the technical or social integration aspects, and predominantly 
+from a theoretical perspective [e.g., 16,17,18,19,20]. 
+This study aims to empirically examine the XAI related aspects that different 
+stakeholders of AI systems encounter during the development of the AI system. Aspects 
+refer to the factors that require a decision to generate and provide meaningful 
+explanations to stakeholders of AI systems. The focus of this study is the Dutch financial 
+industry, leading to the following research question: What XAI related aspects are 
+considered in the development of financial services AI systems?  
+This study presents a conceptual model that encompasses the XAI related categories 
+of aspects that are considered in practice. These categories of aspects offer developers 
+and managers of AI systems an understanding of the decisions that are necessary during 
+the process of making these systems explainable and providing meaningful explanations. 
+The conceptual model is developed from use cases in the financial industry. This is 
+a highly regulated industry with many high-risk AI use cases for which the explainability 
+of an AI system is an important requirement. We argue that our model is also relevant 
+for industries where the stakes are high, and trust plays a crucial role such as healthcare 
+and public services. The upcoming EU AI Act recognizes different high risk AI systems 
+from these industries where these systems must be able to provide information about the 
+reasoning behind their decisions in a human-understandable form, so that users can 
+understand how the system arrived at its conclusions [21].  
+This paper is organized as follows. In Section 2 we present related work. Section 3 
+contains the method. In Section 4 we present the conceptual model and in Section 5 we 
+discuss its implications. Finally, Section 6 contains our conclusions. 
+2. Related Work 
+This section provides an overview of related work regarding the application of XAI in 
+general and the application of XAI in the financial industry.  
+M. Van Den Berg et al. / A Conceptual Model for Implementing Explainable AI by Design 61"
+A_Conceptual_Model_for_Implementing_Explainable_AI.pdf,3,"  
+2.1. Application of XAI in General. 
+The number of XAI publications has exploded in two years from 186 papers in 2018 to 
+1505 papers in 2020 [7]. Many of these studies are theoretical in nature. Relatively few 
+papers address the practical application of XAI. To the best of our knowledge, only 
+Dhanorkar et al. offer an empirical understanding of explainability practices [22]. They 
+found that explanations are iterative, interactive, and emergent, rather than a static quality 
+of a model. Our study aims to increase the empirical understanding of how XAI is 
+developed and used by studying the aspects that require a decision. 
+This study uses the following definition of XAI: “Given a stakeholder, XAI is a set 
+of capabilities that produces an explanation (in the form of details, reasons, or underlying 
+causes) to make the functioning and/or results of an AI solution sufficiently clear so that 
+it is understandable to that stakeholder and addresses the stakeholder's concerns” [23]. 
+This definition covers the technical and social aspects of XAI as discussed in Section 1. 
+To establish a foundation for this study, we derived eight groups of aspects of the 
+application of XAI from the literature. T able 1 contains these groups in which a 
+distinction is made between the use case and the use case transcending level. Most 
+decisions are made on the use case level. This is the level at which the AI system is 
+developed. However, certain decisions can be made on an organization-wide level. 
+Therefore, we identified the “Overall XAI” category.  
+ 
+Table 1. Groups of XAI Related Aspects. 
+Group Level Meaning Example question  References 
+Overall XAI Use case 
+trans-
+cending 
+General policies, 
+principles, and ways of 
+working on XAI 
+What are the principles for how to deal 
+with explainability and XAI? 
+[18,24,25,26] 
+Transparency 
+and 
+explainability  
+Use case Role and impact of 
+transparency and 
+explainability  
+What is the trade-off between the 
+explainability and performance of the AI 
+model? 
+[16,18,20,25, 
+28,29] 
+AI  Use case Role and impact of AI  What is the purpose of AI in the use case? [17,22,25,29, 
+30,31] 
+XAI system  Use case Goal and approach of 
+XAI system  
+What is the purpose of XAI in the use 
+case? 
+[17,18,25,32, 33] 
+Stakeholder’s 
+needs for 
+explanations  
+Use case Stakeholders and their 
+needs for explanations  
+What are possible scenarios to prompt 
+explanations (e.g., understanding inner 
+workings, anticipating user questions, 
+details about data, model mechanics at a 
+high level, and ensuring ethical 
+considerations during model 
+development)? 
+[16,17,18,22, 
+24,25,28,29,33] 
+Explanations  Use case Why, what, and how to 
+explain  
+What kind of information to provide as an 
+explanation and to which stakeholders? 
+[17,18,19,20,24 
+25,26,27,34,35] 
+XAI methods 
+and techniques  
+Use case Methods and 
+techniques to develop 
+the XAI system  
+What technical method(s) to use to generate 
+explanations (e.g., SHAP, LIME, 
+Anchors)? 
+[10,16,17,18, 
+19,20,24,26,27, 
+29,36] 
+Methods and 
+techniques to 
+evaluate XAI  
+Use case Methods and 
+techniques to evaluate 
+the XAI system  
+How to measure stakeholder satisfaction 
+with the explanations provided (e.g., user 
+engagement, Likert scale questionnaires, 
+simulated experiments)? 
+[16,18,19,20, 24] 
+M. Van Den Berg et al. / A Conceptual Model for Implementing Explainable AI by Design62"
+A_Conceptual_Model_for_Implementing_Explainable_AI.pdf,4,"  
+The following terms are used in Table 1 and the remainder of this study: An AI 
+system is a system that is developed and used to decide or predict based on how it learned 
+from data. An XAI system is a system that is developed and used to generate explanations 
+from data and communicate these explanations to relevant stakeholders. Data for an XAI 
+system can be retrieved directly from the AI system or indirectly by using additional 
+post-hoc techniques such as SHAP [37] and LIME [38]. An AI model is a model that is 
+developed and used in an AI system such as a decision tree, random forest, or neural 
+network. 
+2.2. Application of XAI in the Financial Industry 
+Studies into an approach to how XAI can be implemented in financial services are scarce 
+and often limited to single use cases. Bracke et al. present an explainability approach for 
+predicting mortgage defaults using the quantitive input influence method [39]. Bussman 
+et al. propose an XAI model that can be used in fintech risk management [40]. El Quadi 
+et al. focused on companies’ credit scoring and benchmarked different machine learning 
+models supplemented by SHAP [41]. Misheva et al. applied LIME and SHAP to machine 
+learning based credit scoring models [42]. Despite the importance of XAI for the 
+financial industry, no studies discuss how explainability can be integrated into the 
+development of AI systems. 
+3. Method 
+To find aspects that play a role in the implementation of the explainability of AI systems, 
+we conducted a multiple case study in two financial services companies where we 
+collected data from four use cases and developed a draft conceptual model of XAI related 
+categories of aspects. The draft conceptual model was validated in two focus groups. 
+3.1. Development of Draft Conceptual Model  
+In the multiple case study, we focused on four use cases from two financial service 
+providers. The first company is a Dutch fintech, offering business loans to small and 
+medium-sized enterprises (“Lender” from now on). We researched their use cases on 
+customer acceptance (CA) and customer review (CR). Company number two is a bank, 
+with well over 3 million customers and a focus on payments, savings, and mortgages for 
+retail customers, entrepreneurs, and small and medium-sized enterprises (“Bank” from 
+now on). The two use cases from Bank are arrears management (AM) and personal 
+finance in the mobile banking environment (PF). Bank and Lender provided documents 
+for each of the use cases. The use cases were studied through semi-structured interviews 
+with employees involved in the development of AI in these use cases. A total of 15 
+interviews were conducted. Table 2 contains an overview of the participants.  
+The main purpose of the interviews was to gain insight into the aspects for which 
+decisions have been made or foreseen regarding XAI during the development of the AI 
+system in the use case. Due to COVID-19 restrictions at the time, the interviews were 
+conducted online in March-April 2022. Informed consent applied for all interviewees. 
+Interviews were conducted by one researcher at a time and prepared with an interview 
+guide. Each interview was structured around different topics: after an introduction, the 
+interviewee was asked to explain the use case and the purpose and function of AI. As a 
+M. Van Den Berg et al. / A Conceptual Model for Implementing Explainable AI by Design 63"
+A_Conceptual_Model_for_Implementing_Explainable_AI.pdf,5,"  
+next step, the interviewee was asked to recall past and future decisions that were made 
+regarding XAI. Then, to gain a more complete image of decisions related to XAI, further 
+questions were asked about the use case, the AI system, the stakeholders of the AI system, 
+the importance of explainability for the stakeholders, and the processes that the AI 
+system supports. Participants were asked about the obstacles and learning points 
+encountered during the implementation of XAI.  
+ 
+Table 2. Participants in interviews. 
+Nr  Company  Function  # of years 
+function  
+# of years of 
+work experience  
+Use cases  
+P1  Lender  Chief Technology Officer 6  17 CA, CR  
+P2  Lender  Senior Risk Manager  2  10  CR  
+P3  Lender  Head of Compliance 1 8 CA, CR 
+P4 Lender  Machine Learning Engineer 2 3 CA, CR 
+P5 Lender  Risk Manager 4 5 CA 
+P6 Lender  Head of Risk 4 17 CA, CR 
+P7 Bank  Senior Data Scientist 2,5  5 PF  
+P8 Bank  Senior Risk Manager 0,5 29 AM, PF 
+P9 Bank  Head of Risk and Compliance 0 25 AM, PF 
+P10 Bank  Data Engineer 6 26 PF 
+P11 Bank  Business Developer 1 17 AM 
+P12 Bank  Product Owner 0 5 PF 
+P13 Bank  CRM Marketeer 2 20 AM 
+P14 Bank  Data Scientist 2,5 2,5 AM 
+P15 Bank  Lead Modeller 2,5 14 AM, PF 
+ 
+The interviews were transcribed and hereafter coded in ATLAS.ti2. In the first round 
+of analysis, we conducted a form of template analysis. We used a set of codes based on 
+the eight groups in Table 1. As a result, we found 254 quotes in which explicitly or 
+implicitly a certain decision was implied. In a second round, we gave these quotes more 
+concrete codes to identify aspects. We found 46 XAI related aspects, i.e., 46 distinct 
+types of decisions about XAI. We used these aspects to draft a conceptual model. The 
+model was created in an iterative process in which multiple researchers participated. In 
+the final draft model, the 46 aspects were clustered into 17 categories of aspects.  
+ 
+ 
+2 Access to data can be requested from the first author. 
+M. Van Den Berg et al. / A Conceptual Model for Implementing Explainable AI by Design64"
+A_Conceptual_Model_for_Implementing_Explainable_AI.pdf,6,"  
+3.2. Validation of Draft Conceptual Model 
+Two confirmatory focus group meetings were held to validate the draft conceptual model. 
+Due to COVID-19 restrictions, the first focus group meeting was held online using MS 
+Teams on June 7, 2022. The second focus group meeting was a physical meeting on July 
+5, 2022. Ten and nine people respectively participated in the two consecutive focus 
+groups. On average, the participants of the first focus group had 14.2 years of relevant 
+work experience and 4.0 years of knowledge and/or experience with XAI. The second 
+focus group had on average 15.9 years of work experience and 3.9 years of knowledge 
+and/or experience with XAI. The participants were representatives of financial services 
+companies, regulators, government, academia, consultancy services companies, and data 
+science services companies. The focus group meetings lasted two hours each. Each focus 
+group meeting was audio recorded and transcribed. 
+The draft conceptual model was presented at the start of the meeting. The 
+participants were then asked the following question: “To what extent does the model 
+provide insight into what you need to do when you want to apply explainable AI?”. To 
+stimulate independent thinking, we asked the participants to individually brainstorm and 
+write down their answers on paper before discussing these in the group. Then, the 
+answers were discussed one by one. The focus group meetings led to the addition of one 
+category of aspects to the conceptual model. The validated conceptual model will be 
+presented and discussed in Section 4.  
+4. Results 
+4.1. Conceptual Model: An Overview 
+In this section, we present the conceptual model. This model, as shown in Figure 1, 
+contains 18 categories of aspects (white boxes) that need consideration in the 
+development of XAI.  
+The model consists of two levels: the organizational level and the use case level. 
+The organizational level contains categories of aspects that require decisions at a use case 
+transcending level. To govern and streamline the development of AI and XAI systems, 
+guidance from the organizational level may be useful, especially in larger organizations.  
+The use case level contains categories of aspects that require decisions per use case 
+in which AI is used. An example of a use case in this study is “customer acceptance”. As 
+depicted in Figure 1, most decisions occur at the use case level. This is the level at which 
+AI systems and XAI systems are developed. Feedback from experiences at the use case 
+level can lead to adjustments of policies, principles, and guidelines at the organizational 
+level. 
+Importantly, the AI system and the XAI system are intertwined in that achieving 
+requirements for the two systems cannot be considered independently. Decisions on the 
+development of the AI system can have consequences for the XAI system and vice versa. 
+The goal, stakeholder's requirements, and risks of the AI system can affect the goal and 
+risks of the XAI system. On the other hand, the stakeholder's needs for explanations can 
+impact the AI system, such as what type of AI model to choose.  
+We will now discuss the categories of aspects one by one starting at the 
+organizational level.  
+ 
+M. Van Den Berg et al. / A Conceptual Model for Implementing Explainable AI by Design 65"
+A_Conceptual_Model_for_Implementing_Explainable_AI.pdf,7,"  
+Figure 1. Conceptual model of categories of aspects and relationships relevant to the development of XAI. 
+The white boxes contain the 18 categories of aspects and the dark grey boxes the eight groups from Table 1 
+(references for follow-up reading are included in Table 1). The arrows indicate the main relationships.   
+4.1.1. Organizational Level Categories 
+“How to deal with XAI and explainability?” is the first category to discuss. From the 
+case study, it became clear that organizations may formulate corporate-wide XAI related 
+policies and principles rooted in organizational values. Explainability of algorithms is 
+one of the ethical principles of Bank. According to participant P11: ‘One of our guiding 
+principles is banking with a human touch. And if you look at society, we believe that 
+ultimately, we want to create a society in which you can live with confidence and 
+optimism, in which you guide people to prevent long-term financial scarcity. That guides 
+the way we apply AI and XAI’. Lender has a strong emphasis on simplicity. P2 says: ‘One 
+of our guiding principles is to keep it simple, thus explainable’. 
+The second category is “How to design, deliver, and evaluate XAI systems”. 
+Especially in larger organizations such as Bank, particular decisions occur regularly 
+across different use cases and for efficiency reasons it is beneficial to make these 
+decisions once. Bank aims to embed XAI in its standard AI development lifecycle. P14 
+emphasizes: ‘As a data scientist I prefer the embedding of XAI in our data science life 
+cycle. By default, at least think or reflect on XAI at every step’. P9 adds: ‘Ultimately, we 
+could integrate ethical aspects such as explainability into our product approval process’. 
+P8 has concrete ideas on how to integrate explainability in the product life cycle: ‘What 
+I would find important is that […] it is documented how explainability is fulfilled in that 
+situation […] Who is responsible? Through which media? […] People must be instructed 
+M. Van Den Berg et al. / A Conceptual Model for Implementing Explainable AI by Design66"
+A_Conceptual_Model_for_Implementing_Explainable_AI.pdf,8,"  
+on how the explanation should be given’. In Lender the need for standardized ways of 
+working on XAI begins to arise. P1: ‘I think that as you grow as a company, you will feel 
+more a need to write things down and record them’.   
+4.1.2. Use Case Level Categories of AI System 
+The first category on the use case level and part of the AI system is “What is the level of 
+transparency and explainability”. This category deals with the required level of 
+transparency and explainability of an AI model. The levels of transparency and 
+explainability are important since they can affect the goal, stakeholder's requirements, 
+and risks of the AI system as well as the type of AI model. Part of this category are the 
+trade-offs with other requirements such as performance. Transparency about the use of 
+AI in a business process is a sensitive topic that requires careful consideration as P12 
+argues: ‘The customer expects that the choices we make are right. […] Banking matters 
+are just very sensitive. So, even if you are very transparent, you cannot blame a machine’. 
+The trade-off between explainability and performance is a topic that requires careful 
+consideration and is necessary in most use cases in the financial industry. When asking 
+P10 if he will use a black box model if it has better performance, he answered: ‘Should 
+be substantially better. Otherwise, preference for a more interpretable model. And even 
+then, we must see if we can't use that knowledge [from the black box model] to make a 
+simpler model that is almost as good as the black box model’. When asking P5 whether 
+he prefers an AI model that performs better over an AI model that is fully interpretable, 
+he replied: ‘Yes, I prefer a higher performing model. However, you must be able to 
+understand well which inputs enter the model and that it also makes sense what comes 
+out’. From a more managerial perspective, P1 argues: ‘ If the performance is relatively 
+equal, we opt for the explainable model anyway. We would not readily adopt a model 
+that we cannot explain because we know that if we want to [...] explain it to our 
+customers, then we will have to be able to say something about the explainability’ . P7 
+agrees with that point of view: ‘Usually, I prefer a more interpretable model that works 
+a little less well’. 
+The following category is “What is the goal of the AI system?”. This category allows 
+one to think about the purpose of using AI in a use case, thereby reasoning about how it 
+affects stakeholders. P1 illustrates this as follows: ‘Regarding customer acceptance, the 
+business case for using AI is that we can automatically reject most of these customers. 
+Most of all requests are rejected. And you want to spend as little time as possible on that 
+process’.  
+The category “Who are the stakeholders of the AI system?” is closely related to the 
+previous category. Stakeholders of the AI system might also be the stakeholders in need 
+of an explanation. So, knowing the stakeholders is important in the context of XAI and 
+was mentioned often in the interviews. In the personal finance use case, the customer 
+was mentioned by everybody as the main stakeholder. Additionally, marketing, the AI 
+team, the business, and society were mentioned. Most often mentioned external 
+stakeholders were the customer and the regulator. Internal stakeholders mentioned were 
+diverse: underwriter, risk manager, risk and compliance manager, sales officer, 
+marketing officer, data scientist, machine learning engineer, model owner, and senior 
+manager. Each of these stakeholders may have different needs for explanations.  
+“What are the risks of the AI system?” is a category of aspects that allows one to 
+assess the potential harm and ethical concerns associated with the use of the AI system. 
+The higher the risks, e.g., in terms of violating human rights or loss of reputation, the 
+M. Van Den Berg et al. / A Conceptual Model for Implementing Explainable AI by Design 67"
+A_Conceptual_Model_for_Implementing_Explainable_AI.pdf,9,"  
+greater the need for XAI. P12 indicates: ‘What is the risk for our customers and also for 
+ourselves, reputation damage for example’ . According to P8: ‘The application of AI 
+touches on the bank's duty of care […]. To what extent is a false positive acceptable and 
+did we explain that?’. P13 sees XAI as a means ‘To reduce risks’.  
+Next is the category “What is the type of AI model?” which is the choice between 
+types like decision tree, random forest, or a neural network. This category was frequently 
+mentioned in the interviews and is deemed to be an important decision. P4 indicates: 
+‘This is one of the most important things. You just need to be clear right away about 
+what's going on here. […] We prefer to use something linear because context is extremely 
+important. […] So preferably you use a model that is as simple as possible, because the 
+moment you start using boosting or a neural network, for example, these models can 
+become very specific and overfit much faster’ . According to P15, Bank is following 
+developments in ‘Advanced machine learning techniques’ . P14 indicates that 
+explainability is an important requirement for the choice of type of AI model: ‘The most 
+important thing for retraining our current model will be that the model itself remains 
+explainable’.  
+The last category is “What are the data used to train and test the AI system?”. One 
+of the most frequently mentioned decisions in the interviews is what variables (features) 
+to include in the AI model. When asked for the three most difficult decisions regarding 
+explainability, P14 answered: ‘From a data science perspective, which AI model you use, 
+to what extent you weigh the performance of a model against its explainability, and which 
+features to use’. P13 finds the decision ‘What data to include in the AI model’ the most 
+difficult one. P5 indicates ‘We are continuously looking for which variables we can add 
+to the model to improve it’. P3 adds to this: ‘The regulator requires us to take certain 
+risk factors such as geography risks into consideration’ . Although this category was 
+mentioned in the interviews, we initially did not include it in the conceptual model. Based 
+on comments from the first focus group, we added it. Data is the foundation for any AI 
+system, and therefore also for an XAI system.  
+4.1.3. Use Case Level Categories of XAI System 
+The first category of the XAI system, as shown in Figure 1, is “What is the goal of the 
+XAI system?”. P4 states: ‘I think a big part of machine learning adoption has to do with 
+trust. The moment you can explain an outcome very well, and that explanation is correct, 
+users will gain more confidence in it over time. I think that is very valuable’ . P15 
+indicates: ‘Explainability is important. If we make a choice, whether someone gets a 
+mortgage or not, it must be ethically responsible’. These examples demonstrate that the 
+purpose of XAI can vary, e.g., to increase trust or to justify decisions. 
+The next category is “What are the risks of the XAI system?”. One of the risks 
+mentioned by P5 is that ‘If you give too much information, the system can be gamed. We 
+must carefully consider what information we provide to our customers’. 
+“Who are the stakeholders of the XAI system?” is a category very closely related to 
+“Who are the stakeholders of the AI system?”. The interviews showed no differences 
+between the AI and XAI system in terms of who the stakeholders are.  
+The following category “What are the stakeholder's needs for explanations?” is the 
+most frequently mentioned category across all interviews. Interviewees are aware that 
+the development of an XAI system starts with the stakeholder’s needs. In all four use 
+cases, both internal and external stakeholders were considered as in need of explanations. 
+These needs are diverse: feature importance, the accuracy of the prediction, insight into 
+M. Van Den Berg et al. / A Conceptual Model for Implementing Explainable AI by Design68"
+A_Conceptual_Model_for_Implementing_Explainable_AI.pdf,10,"  
+what data is used and how, reasons for a specific prediction, insight into how the AI 
+model can be improved, and insight into the inner workings of the AI system and AI 
+model. When asked to what extent customers ask for explanations P1 answered: 
+‘Customers don't ask for features, they don't understand that. I think the question is 
+simply, why are you making this decision? And whether that decision is made by a person 
+or by a model does not matter to customers. They just want to see a substantiation for 
+that decision’.  
+“What to explain and to whom?” is the category of aspects that addresses decisions 
+regarding what information to provide and to which stakeholders. What to explain is the 
+second most frequently mentioned aspect in the interviews. It emerged from the 
+interviews that this is a tricky question, especially when it comes to the information that 
+must be provided to customers. According to P13 ‘We don’t start the conversation [with 
+customers] by providing information from the AI system. After all, the AI system might 
+be wrong’. P11 indicates: ‘If you are going to explain to customers that outcomes come 
+from a model and how it works, that is very difficult to explain. Neither should I tell the 
+customer that he is a false positive or false negative’. What to explain to internal 
+stakeholders is a learning process. P4 explains: ‘SHAP seems more suitable for the data 
+scientist or machine learning engineer than for someone less familiar with it. To me the 
+most important thing is that when you want to make your model explainable, it is also 
+understandable for your end users. That's the most important choice you must make. We 
+are now studying to make it even better. SHAP can be useful to explain model predictions 
+or feature contribution. Much more is possible; we are now investigating that’.  
+The next category is “How to deliver the explanation?”. In all four use cases we 
+studied, an internal person (human in the loop) was involved in providing customers with 
+explanations. The automation of conveying explanations is still in an embryonic stage. 
+P1 illustrates this: ‘ I think explanation is very much in the presentation. We should 
+visualize the SHAP plot better. Because with SHAP you see features and they are 
+horizontal. […] That is too difficult. I think if we were to display the SHAP values on a 
+scale of zero to hundred, as if it were a scorecard, it would be taken more seriously’ . 
+Regarding the kind of language of an explanation, P13 argues: ‘The why of a prediction 
+must be clear cut in a language my mother-in-law also understands’. P12 says: ‘We try 
+to avoid technical and banking terms, because it creates distance and people don't 
+understand it any better’.  
+The following categories deal with methods and techniques to develop XAI. We 
+have divided this into three categories: methods, techniques, and tools. The interviews 
+showed that decisions on these categories are still scarce but are foreseen for the near 
+future. In terms of methods, decisions have been made for post-hoc local feature 
+importance methods. Regarding techniques, SHAP is mostly mentioned, and regarding 
+tools, the SHAP package is mentioned. P4 mentions the use of Shapley values and the 
+SHAP package while P14 envisions standard XAI tooling to increase the number of 
+different AI models available for selection: ‘I prefer standard tooling. The moment we 
+can use a model such as the XGBoost model, to which an explanation is immediately 
+linked with that tooling, then it no longer stops us or at least less, to choose such a model’.  
+The final category “How to evaluate the XAI system” covers the evaluation 
+measures for the XAI system and the methods and techniques that are used. This category 
+was not mentioned in the interviews. However, Bank and Lender remarked that this is 
+one of the points of attention for the near future. 
+M. Van Den Berg et al. / A Conceptual Model for Implementing Explainable AI by Design 69"
+A_Conceptual_Model_for_Implementing_Explainable_AI.pdf,11,"  
+4.2. Validation of Conceptual Model 
+Two confirmatory focus groups were conducted to validate the conceptual model. As 
+previously discussed in Section 4.1, the category “What are the data used to train and 
+test the AI model” was added to the conceptual model based on the results of these focus 
+groups. Overall, the participants expressed positive feedback and were enthusiastic about 
+the model, with comments such as, ‘I find the model quite complete’, ‘I appreciate the 
+distinction between organizational and use case level’, and ‘The model provides a good 
+overview of aspects relevant in the implementation of XAI’.  
+5. Discussion 
+This study highlights the need to consider a wide range of distinct aspects in the 
+development of XAI. These aspects show that multiple decisions are needed to arrive at 
+a situation where stakeholders of the AI system receive a proper and meaningful 
+explanation. Furthermore, these aspects can interact with each other. E.g., the type of AI 
+model impacts the way explanations are delivered. Moreover, the stakeholder's needs for 
+explanations can affect the decision of what type of AI model to choose. The number of 
+as well as the dependencies between aspects require XAI to be approached “by design”. 
+If an AI system is developed whose outcomes have a major impact on stakeholders such 
+as customers, professionals, and regulators, it is crucial to consider what and how to 
+explain to those stakeholders from the outset [43]. Our conceptual model can serve as a 
+starting point to develop a methodology for XAI by design and as a taxonomy for method 
+engineering of XAI related methods, techniques, and tools. 
+The conceptual model is derived from use cases in the financial industry, a highly 
+regulated field where explainability of AI systems is an important requirement. We argue 
+that our model is relevant for industries where decisions have a direct impact on 
+individuals and trust is critical, such as healthcare and public services. The categories of 
+aspects in our model will equally support developers of AI systems in these industries to 
+make their systems explainable and provide stakeholders with meaningful explanations.  
+Dhanorkar et al. found that explanations are iterative, interactive, and emergent [22]. 
+Translated to our model, this would mean that the categories of aspects that we identified 
+do not have a fixed place in an AI development process, may occur multiple times, and 
+can occur suddenly without developers of AI systems being aware of it. Our research 
+also points in that direction. Although we asked about it in the interviews, it was 
+challenging for interviewees to indicate when a certain decision was made during their 
+AI development process. Further research is needed to determine when certain categories 
+of aspects require a decision, such as how to integrate XAI related aspects into a standard 
+AI lifecycle model like CRISP-ML(Q) [44]. Nonetheless, our conceptual model supports 
+developers in being aware of what is needed to handle the explainability of their AI 
+systems and create meaningful explanations.  
+The case studies illustrate preferences among interviewees. While some preferred 
+interpretability and simplicity of the AI model over a more complex model with slightly 
+better performance, another interviewee found that explainable outputs from SHAP 
+helped stakeholders understand the outcomes and inner workings of the AI model. The 
+case studies also showed that different XAI methods were more suitable for certain 
+stakeholders than others, highlighting the need for further investigating which methods 
+or frameworks are suitable for different stakeholders and under what circumstances.    
+M. Van Den Berg et al. / A Conceptual Model for Implementing Explainable AI by Design70"
+A_Conceptual_Model_for_Implementing_Explainable_AI.pdf,12,"  
+The strength of the conceptual model is its completeness, as confirmed by the focus 
+groups. Further research is needed to validate the completeness of the model in practice. 
+Another strength of the model is that it is based on the experiences of practitioners. 
+However, our conceptual model does not guide how to use it in practice. A process 
+behind the model is lacking and requires future research.  
+This study has limitations. First, the conceptual model is based on four use cases 
+from two organizations in the Netherlands. More research is needed to test the 
+generalizability of the model. Second, two types of biases may occur in case studies: 
+biases from the researcher’s effects at the site and the researcher's data collection and 
+analysis. We attempted to minimize the first type of bias by using an interview guide and 
+informing the participants about the purpose of this research. The second type was 
+counteracted by involving three researchers simultaneously in data collection and 
+analysis and by using multiple sources of evidence (triangulation of data). In our case, 
+we used data from documents, interviews, and focus groups.   
+6. Conclusion 
+This study presents a conceptual model of XAI related categories of aspects that must be 
+considered in the development of AI systems. The model highlights the importance of 
+approaching XAI “by design”, integrating it into the broader AI development process 
+and not treating it as an afterthought. This is particularly crucial in high-risk use cases 
+and highly regulated industries such as healthcare, finance, and public services, where 
+the intelligibility of an AI system can be as critical to its success as its predictive accuracy. 
+The model provides valuable insights for both practitioners and researchers in the 
+field of XAI. For practitioners, it provides guidance on what aspects to consider in the 
+development of explainable AI systems and how to make informed decisions. For 
+researchers, the model serves as a starting point for further research and the development 
+of XAI methodologies. 
+It is important to note that the conceptual model is based on data from use cases in 
+the financial industry and more research is needed to validate its generalizability to other 
+industries. Nevertheless, the model provides a comprehensive framework that helps 
+practitioners and researchers alike to understand the complexities of XAI and the 
+importance of approaching it “by design”. 
+ 
+Acknowledgement 
+This research was financially supported by the Dutch Taskforce for Applied Research 
+SIA under reference KIEM.K21.01.046.  
+ 
+Author statement 
+ Substantial contributions to the conception and design of the work: MvdB, OK, SL. 
+ Substantial contributions to data collection and analysis: MvdB, OK, YvdH. 
+ Wrote the first draft of the manuscript: MvdB, DS. 
+ Revised the manuscript: OK, YvdH, DS, JG, SL. 
+ Final approval of the version to be submitted for publication and agreement to be 
+accountable for all aspects of the work in ensuring that questions related to the 
+accuracy or integrity of any part of the work are appropriately investigated and 
+resolved: all authors.  
+M. Van Den Berg et al. / A Conceptual Model for Implementing Explainable AI by Design 71"
+A_Conceptual_Model_for_Implementing_Explainable_AI.pdf,13,"  
+References 
+[1] Benbya H, Davenport TH, Pachidi S. Artificial Intelligence in organizations: Current State and future 
+opportunities. MIS Quarterly Executive. 2020 19(4) article 4, doi: 10.2139/ssrn.3741983 
+[2] Gartner. What is Artificial Intelligence (AI) Gartner. [cited 2023 Jan 17]. Available from 
+https://www.gartner.com/en/topics/artificial-intelligence  
+[3] Arrieta AB, Díaz-Rodríguez N, Del Ser J, Bennetot A, Tabik S, Barbado A, Garcia S, Gil-Lopez S, 
+Molina D, Benjamins R, Chatila R, Herrera F. Explainable artificial intelligence (XAI): Concepts, 
+taxonomies, opportunities and challenges toward responsible AI. Information Fusion. 2020 58:82–115, 
+doi: 10.1016/j.inffus.2019.12.012 
+[4] Kaminski ME. The right to explanation, explained. In: Sandeen SK, Rademacher C, Ohly A, editors. 
+Research Handbook on Information Law and Governance. 2021 (pp. 278-299), doi: 
+10.4337/9781788119924.00024 
+[5] Goodman B, Flaxman S. European Union regulations on algorithmic decision-making and a ""right to 
+explanation"". AI magazine 2017 38(3), 50-57 doi: 10.1609/aimag.v38i3.2741 
+[6] Adadi A, Berrada M. Peeking inside the black-box: A survey on explainable artificial intelligence (XAI). 
+IEEE Access. 2018 6:52138–60, doi: 10.1109/ACCESS.2018.2870052 
+[7] Islam MR, Ahmed MU, Barua S, Begum S. A systematic review of explainable artificial intelligence in 
+terms of different application domains and tasks. Applied Sciences. 2022 12(3):1353. doi: 
+10.3390/app12031353 
+[8] Miller T. Explanation in artificial intelligence: Insights from the Social Sciences. Artificial Intelligence. 
+2019 267:1–38, doi: 10.1016/j.artint.2018.07.007 
+[9] HLEG (The High-Level Expert Group on Artificial Intelligence). Ethics Guidelines for Trustworthy AI. 
+EU Document. 2019 [cited 2023 Jan 15]. Available from https://ec.europa.eu/digital-single-
+market/en/news/ethics-guidelines-trustworthy-ai  
+[10] Morley J, Floridi L, Kinsey L, Elhalal A. From what to how: An initial review of publicly available AI 
+ethics tools, methods and research to translate principles into practices. Philosophical Studies Series. 
+2021 153–83, doi: 10.1007/978-3-030-81907-1_10 
+[11] McWaters, RJ. Navigating Uncharted Waters: A Roadmap to Responsible Innovation with AI in 
+Financial Services: Part of the Future of Financial Services Series. 2019 World Economic Forum.   
+[12] Kuiper O, Van den Berg M, Van der Burgt J, Leijnen S. Exploring explainable AI in the financial sector: 
+Perspectives of Banks and supervisory authorities. In: In: Leiva LA, Pruski C, Markovich R, Najjar A, 
+Schommer C. editors. Artificial Intelligence and Machine Learning. BNAIC/Benelearn 2021. 
+Communications in Computer and Information Science, vol 1530. Springer, Cham. 2021, doi: 
+10.1007/978-3-030-93842-0_6 
+[13] Bauer K, Hinz O, Van der Aalst W, Weinhardt C. EXPL(AI)n it to me – explainable AI and Information 
+Systems Research. Business & Information Systems Engineering. 2021;63(2):79–82, doi: 
+10.1007/s12599-021-00683-2 
+[14] Liao QV, Varshney, Kush R. Human-Centered Explainable AI (XAI): From Algorithms to User 
+Experiences. ArXiv. 2021, doi:10.48550/arXiv.2110.10790 
+[15] Kemper J, Kolkman D. Transparent to whom? no algorithmic accountability without a critical audience. 
+Information, Communication & Society. 2018 22(14):2081–96, doi: 10.1080/1369118x.2018.1477967 
+[16] Belle V, Papantonis I. Principles and practice of explainable machine learning. Frontiers in Big Data. 
+2021 4, doi: 10.3389/fdata.2021.688969 
+[17] Meske C, Bunde E, Schneider J, Gersch M. Explainable artificial intelligence: Objectives, stakeholders, 
+and future research opportunities. Information Systems Management. 2020 39(1):53–63, doi: 
+10.1080/10580530.2020.1849465 
+[18] Mohseni S, Zarei N, Ragan ED. A multidisciplinary survey and framework for design and evaluation of 
+Explainable AI Systems. ACM Transactions on Interactive Intelligent Systems. 2021 11(3-4):1–45, doi: 
+10.1145/3387166 
+[19] Schwalbe G, Finzel B. A Comprehensive Taxonomy for Explainable Artificial Intelligence: A Systematic 
+Survey of Surveys on Methods and Concepts. ArXiv. 2021, doi: 10.1007/s10618-022-00867-8 
+[20] Vilone G, Longo L. Explainable Artificial Intelligence: A Systematic Review. 2020, doi: 
+10.48550/arXiv.2006.00093 
+[21] European Commission. Regulatory framework proposal on artificial intelligence. [cited 2023 Jan 12]. 
+Available from https://digital-strategy.ec.europa.eu/en/policies/regulatory-framework-ai 
+[22] Dhanorkar S, Wolf CT, Qian K, Xu A, Popa L, Li Y. Who needs to know what, when?: Broadening the 
+explainable ai (XAI) design space by looking at explanations across the AI lifecycle. Designing 
+Interactive Systems Conference 2021. 2021, doi: 10.1145/3461778.3462131 
+[23] Van den Berg M. Kuiper OX. XAI in the Financial Sector. [cited 2023 Jan 15]. Available from 
+https://www.internationalhu.com/research/projects/explainable-ai-in-the-financial-sector 
+M. Van Den Berg et al. / A Conceptual Model for Implementing Explainable AI by Design72"
+A_Conceptual_Model_for_Implementing_Explainable_AI.pdf,14,"  
+[24] Phillips PJ, Hahn CA, Fontana PC, Broniatowski DA, Przybocki MA. Four principles of Explainable 
+Artificial Intelligence. 2020, doi: 10.6028/nist.ir.8312-draft 
+[25] Leslie D. Understanding artificial intelligence ethics and safety. arXiv preprint arXiv:1906.05684. 2019, 
+doi: 10.5281/zenodo.3240529 
+[26] Jeyakumar JV, Noor J, Cheng YH, Garcia L, Srivastava M. How can I explain this to you? An 
+empirical study of deep neural network explanation methods. Advances in Neural Information 
+Processing Systems. 2020 33, 4211-4222 
+[27] Toreini E, Aitken M, Coopamootoo K, Elliott K, Zelaya CG, van Moorsel A. The relationship between 
+trust in AI and Trustworthy Machine Learning Technologies. Proceedings of the 2020 Conference on 
+Fairness, Accountability, and Transparency. 2020, doi: 10.1145/3351095.3372834 
+[28] Miller T, Howe P, Sonenberg L. Explainable AI: Beware of Inmates Running the Asylum Or: How I 
+Learnt to Stop Worrying and Love the Social and Behavioural Sciences. 2017, doi: 
+10.48550/arXiv.1712.00547  
+[29] Koster O, Kosman R, Visser J. A checklist for Explainable AI in the insurance domain. 
+Communications in Computer and Information Science. 2021 446–56, doi: 0.1007/978-3-030-85347-
+1_32 
+[30] Walz A, Firth-Butterfield K. Implementing ethics into artificial intelligence: a contribution, from a legal 
+perspective to the development of an AI governance regime. Duke Law & Technology Review. 2019 
+18(1), 180-231.  
+[31] Zhou J, Chen F, Berry A, Reed M, Zhang S, Savage S. A survey on ethical principles of AI and 
+implementations. In 2020 IEEE Symposium Series on Computational Intelligence (SSCI) 2020 (pp. 
+3010-3017). IEEE, doi: 10.1109/SSCI47803.2020.9308437 
+[32] Shin D. The effects of explainability and causability on perception, trust, and acceptance: Implications 
+for explainable AI. International Journal of Human-Computer Studies. 2021 146, 102551, doi: 
+10.1016/j.ijhcs.2020.102551 
+[33] Wang D, Yang Q, Abdul A, Lim BY. Designing theory-driven user-centric explainable AI. In 
+Proceedings of the 2019 CHI conference on human factors in computing systems. 2019 (pp. 1-15). 
+[34] Liao QV, Gruen D, Miller, S. Questioning the AI: informing design practices for explainable AI user 
+experiences. In Proceedings of the 2020 CHI conference on human factors in computing systems. 2020 
+(pp. 1-15), doi: 10.1145/3313831.3376590 
+[35] Georgieva I, Lazo C, Timan T, van Veenstra AF. From AI ethics principles to data science practice: a 
+reflection and a gap analysis based on recent frameworks and practical experience. AI and Ethics. 2022 
+1-15, doi: 10.1145/3290605.3300831 
+[36] John-Mathews JM. Critical empirical study on black-box explanations in AI. 2021 arXiv preprint 
+arXiv:2109.15067. doi: 10.48550/arXiv.2109.15067 
+[37] Lundberg SM, Lee SI. A unified approach to interpreting model predictions. A unified approach to 
+interpreting model predictions. In: Proceedings of the 31st International Conference on Neural 
+Information Processing Systems (NIPS'17). Curran Associates Inc., Red Hook, NY, USA, 2017, p 4768–
+4777 
+[38] Ribeiro M, Singh S, Guestrin C. “Why should I trust you?”: Explaining the predictions of any classifier. 
+Proceedings of the 2016 Conference of the North American Chapter of the Association for Computational 
+Linguistics: Demonstrations. 2016, doi: 10.18653/v1/n16-3020 
+[39] Bracke P, Datta A, Jung C, Sen S. Machine learning explainability in finance: an application to default 
+risk analysis. 2019 Staff Working Paper No. 816. London, United Kingdom: Bank of England. 2019, doi: 
+10.2139/ssrn.3435104 
+[40] Bussmann N, Giudici P, Marinelli D, Papenbrock J. Explainable AI in fintech risk management. Frontiers 
+in Artificial Intelligence. 2020 3, 26, doi: 10.3389/frai.2020.00026 
+[41] Qadi AE, Diaz-Rodriguez N, Trocan M, Frossard T. Explaining credit risk scoring through feature 
+contribution alignment with expert risk analysts. 2021 arXiv preprint arXiv:2103.08359, doi: 
+10.48550/arXiv.2103.08359 
+[42] Misheva BH, Osterrieder J, Hirsa A, Kulkarni O, Lin SF. Explainable AI in credit risk management. 2021 
+arXiv preprint arXiv:2103.00949, doi: 10.48550/arXiv.2103.00949 
+[43] Huynh TD, Tsakalakis N, Helal A, Stalla-Bourdillon S, Moreau L. Explainability-by-Design: A 
+Methodology to Support Explanations in Decision-Making Systems. 2022 arXiv preprint 
+arXiv:2206.06251, doi: 10.48550/arXiv.2206.06251 
+[44] Studer S, Bui TB, Drescher C, Hanuschkin A, Winkler L, Peters S, Müller KR. Towards CRISP-ML (Q): 
+a machine learning process model with quality assurance methodology. Machine Learning and 
+Knowledge Extraction. 2021 3(2), 392-413, doi: 10.3390/make3020020 
+M. Van Den Berg et al. / A Conceptual Model for Implementing Explainable AI by Design 73"
+hhai-2022_paper_67.pdf,1,"Knowledge Graphs in support of
+Human-Machine intelligence
+Christophe GU ´ERET a,1
+a Accenture Labs, The Dock, Dublin, Ireland
+Abstract. Knowledge graphs are established as a powerful way to represent het-
+erogeneous knowledge in a unified model, providing an integrated view over data
+coming from different domains. They are the back-end of data fabrics helping busi-
+nesses make sense of their data and they enable complex, holistic, reasoning via
+graph machine learning. However the creation of a KG and its use are typically ap-
+proached as two disconnected tasks even if the use-cases informs the design of an
+ontology. In this position paper we highlight some of the challenges created by this
+split view approach. We further discuss how this impairs working towards Hybrid
+Intelligence and propose an alternative architecture based on several operational
+components. We argue this set of components can together enable the interactive
+exchange of ideas between human and machines around a shared data model.
+Keywords. HITL, Knowledge Graph
+Introduction
+With the progress of Artificial Intelligence (AI) came the discussion about whether some
+day it will replace all human activities. It is now becoming apparent that even if AI
+has its own strength Human have their own too. We are heading more towards a future
+combining each other strength in order to achieve a common goal [1,2]. The point can
+further be made that machines aiming at making sense of human specific traits, such as
+the appreciation of aesthetics, require crucially depends on the presence of humans in
+the loop to work [3].
+In this context, Knowledge Graphs emerge as a flexible data representation tech-
+nology capable of connecting together heterogeneous data in a unified semantically rich
+model [4]. This graph can further be directly used by machine learning approaches to
+support reasoning [5]. However we observe that the work done around Knowledge Graph
+typically considers the tasks of creating and putting a KG into use as two separate fo-
+cus points. We further argue that in order to support creating a Collaborative, Adaptive,
+Responsible and Explainable AI research agenda [1] there is a need for a tighter inte-
+gration between components in charge of the usage of the graph and those related to its
+evolution. Our main contributions are:
+• A list of shortcomings and challenges when creating Knowledge Graphs and Use-
+cases on top of them for a human-machine collective intelligence case;
+1Corresponding Author: Christophe Gu´eret christophe.gueret@accenture.com"
+hhai-2022_paper_67.pdf,2,"• An example use-case to ground our discussion;
+• A proposal for a high level architecture for a different kind of KG pipeline en-
+abling more collaboration.
+For the remainder of this paper we introduce the use-case in Section 2 and the spe-
+cific challenges this raises (Section 3). We finally conclude on future work after having
+presented a high level architecture in Section 4.
+1. KGs in support of Human-Machine collaboration
+Knowledge Graphs are a flexible data representation technology capable of connecting
+together heterogeneous data in a unified semantically rich model [4]. This graph can be
+used directly to provide a ”360 view” over data silos in a business context, or constitute
+the data layer for machine learning algorithms - thereby replacing feature tables used by
+other machine learning techniques [5]. Several architectures and approaches have been
+proposed to construct and care for this knowledge graph [6]. Some of the latest advances
+have recently been discussed in a dedicated workshop [7] which covered, among other
+topics, the application of graph embedding techniques to support the creation and cura-
+tion of the graph. This kind of tooling could be of use to Knowledge Scientists [8] in
+their goal of delivering clean integrated data for use by a set of stake holders.
+Next to this, several architectures are being considered to make use of that graph in
+combination with other forms of machine learning. The success of connectionist models
+over the past couple of years lead to a particular focus on Neurosymbolic computing
+combining these models with Knowledge Graphs but symbolic-subsymbolic integration
+is a larger topic [9]. The graph embedding approach mentioned above is one of those
+which could be approached via Neurosymbolic computing. A neural network is used to
+turn the graph into a vector space which is then used for reasoning. This enables usage
+going beyond querying the graph and reasoning over it with rules.
+Connecting the two, the usage of knowledge graphs will see a number of human
+interventions to design the content of the graph and its usage. The evolution of the graph
+is also a matter of human-in-the-loop processes [10,8,11] to progressively enrich it along
+with the consideration of new usages and the tuning of existing ones. Figure 1 is an
+attempt at representing this interplay between these components and stake holders.
+According to Dellermann et al. [2] a Hybrid Intelligence usage scenario would ex-
+hibit some key Collaboration, Superior Results and Continuous Learning behaviours.
+This means a greater amount of joint work between the Human and the Machine to tackle
+a challenge together and with better results than when working alone. Mutual teaching
+is also key as the Machine need to benefit from the collaboration as the Human will.
+However the Human-In-The-Loop (HITL) aspects of the approach depicted in Figure 1
+may hinder this as this learning will be mediated by another Human. Beyond collabora-
+tion, Akata et al. [1] add Explainability, Responsibility and Adaptability on the research
+agenda for Hybrid Intelligence. We in particular highlight here the potential limitation
+these HITL aspects bring to adaptation. The system designed following an approach as
+depicted in Figure 1 will have difficulties adapting to new needs from the user without
+Humans mediating this adaptation.
+We propose to consider in a more integrated way the creation and the usage of a
+Knowledge Graph in order to support a Hybrid Intelligence. To further support this po-"
+hhai-2022_paper_67.pdf,3,"Figure 1. State of the art approaches to making and using a Knowledge Graph in a AI context rely on two
+distinctive parts besides the use-case interface. Human are in the loop and collectively can improve on the
+overall, end-to-end, pipeline.
+sition we introduce a specific use-case scenario of collaborative diagnosis for the medi-
+cal domain. The proposed approach is however not limited to health care, we are in fact
+deploying the same building blocks to support consulting activities around the topic of
+Industry X.0.
+2. Use-case: Consultation Support
+We will illustrate this position with an applied use-case in healthcare. In this domain,
+AI, mainly thank to its machine learning capabilities, is poised to revolutionise our un-
+derstanding of the human body and support a range of medical processes with valuable
+insights. Knowledge Graph can in particular support the process of creating multi-omics
+data sets. This term denotes the combination of several population level data sets ( e.g.
+DisGenet 2, PubChem 3) together with patient level data sets (e.g. Synthea4) in a unified
+data model. As all these data sets have a distinct focus (organs, genes, proteins, ...) their
+combination unlocks a more global understanding of the human body and potentially
+contributes to a better diagnosis. This kind of graph has been successfully applied, for
+example, to cluster patients based on a shared medical history contextualised with other
+data sets [12].
+For our use-case we will focus on diagnosis as studied by Richens et al. [13]. They
+formally define the problem as ”The identification of the diseases that are most likely to
+be causing the patient’s symptoms, given their medical history”. Whereas their work fo-
+cus on using causal reasoning to tackle this challenge we will consider a link prediction
+task with a graph embedding model. Furthermore, placing ourselves in a Hybrid Intelli-
+gence perspective, we will consider the link prediction task being equally performed by
+Human and Machine operators. Both parties will be expected to contribute to the dis-
+cussion with justified propositions. They will also be considered to each have a specific
+expertise complementing that of the other actor, and creating a collective opportunity to
+learn from each other.
+2https://www.disgenet.org/, Last visited March 9th 2022
+3https://pubchem.ncbi.nlm.nih.gov/, Last visited March 9th 2022
+4https://synthetichealth.github.io/synthea/, Last visited March 9th 2022"
+hhai-2022_paper_67.pdf,4,"Considering this definition Figure 2 represents an overview of main components for
+this use-case. We will consider a simplified view of one human doctor working with
+one machine, each having their own knowledge and expertise depicted as a Knowledge
+Graph. Multi-omics raw data is provided as an input to the human+machine team which
+collaboratively produces a set of Disease-Symptom links as an output. During this pro-
+cess we aim at seeing the human and the machine debate associations and learn from
+each other.
+Figure 2. The consultation support use-case generates Disease-Symptom as an output, leveraging multi-omics
+data as an input. In the middle we find a team made of one human and one machine collaborate to compose the
+set of links. While doing so they each leverage and improve a personal knowledge base summing up their own
+expertise and experience. In order to highlight the equal role of both parties the same icon is used with an ”H”
+annotation for the Human intelligence and a ”M” for its Machine team mate
+Both the human and machine parties are expected to contribute to the task to an
+equal level and exhibit a shared set of behaviour. These expectations can be summarised
+as follows:
+• Contribute to the refinement of the content of the hypothesis set;
+• Learn from the other actor in order to become better at the task over time;
+• Explain and argument the propositions made;
+• Be mindful of the conclusions made to avoid disclosing potentially sensitive data.
+In the next section we go other how these expectation map into the process of creat-
+ing and using a Knowledge Graph as represented in Figure 1. We in particular highlight
+the specific challenges we identify from this kind of pipeline.
+3. Implementation challenges
+We hereafter consider the implementation of the use case introduced in Section 2 in the
+light of the design approach depicted in Figure 1.
+The problem consists in assembling a multi-omics dataset and executing a link pre-
+diction task. Considering an ontology introducing the specific concepts of Disease and
+Symptom that prediction task will consist in linking a set of identified Symptom nodes
+to a set of Disease nodes. This can be implemented using tools such as the Enterprise
+Knowledge Graph platform Stardog 5 and the graph machine learning library Ampli-
+graph [14]. Explanations for the links could be provided as information about the impor-
+tance of specific other edges in the graph for the prediction [15].
+5https://www.stardog.com/, Last visited March 11th 2022"
+hhai-2022_paper_67.pdf,5,"Paraphrasing the research agenda for Hybrid Intelligence system proposed in [1]
+we can define 4 set of target behaviour for the assembled system:
+• Collaboration: the system works in synergy with humans;
+• Adaptation: the system adapt to the humans and their environment;
+• Responsibility: the system will behave ethically and responsibly;
+• Explanability: the system will share its awareness, goals and strategy.
+We can then study for each of those 4 points how an approach based on constructing
+a graph, shipping it to a link prediction module, and providing users with a ranked list of
+suggestion could be challenged by these objectives.
+Collaboration requires providing suggestion for links as well as receiving some. Instead
+of being a one-off output the link prediction task will have to be placed in an
+iterative context of way and back propositions between different parties discussing
+it. There is thus a need for a feedback loop between reasoning and the validation
+of each hypothesis, or subset thereof.
+Adaptation to the work context requires being able to contextualise the graph to a par-
+ticular patient. Humans will be expected to switch from working one patient case
+to another one and the machine should adapt to that. There are also parts of the
+discussion which may require focusing on sub-parts of the graph and require more
+external data. For instance, validating a working hypothesis against the most re-
+cent research published on BioRxiv6. It can also be expected from the machine to
+adapt its understanding of the medical landscape over time as it build up expertise.
+This potentially means refining the ontology and/or the data over the course of the
+interactions. A process akin to reinforcement learning.
+Responsibility towards the data and the insights provided relates to other challenges in
+the creation of central Knowledge Graphs containing potentially sensitive infor-
+mation [16]. The AI will have to be mindful of not disclosing potentially sensi-
+tive information via its link predication or the explanation for them. On the other
+hand, as it will collaborate with and adapt to other parties the AI should not take
+for granted everything said by everyone. Each piece of incoming information will
+have to be parked and scrutinized before it makes it into further reasoning process.
+Explanability will be key to the collaboration in order for all the actors to learn from
+each other. This means the machine will have to explain its reasoning for each
+single link proposed [17] but also for a set of links as a whole; potentially with
+a Global Counterfactual Explanation (GCE) [18] approach. Conversely, humans
+will do the same and explain their train of thought. That knowledge should then be
+considered by the machine for its own further reasoning approach (with a pinch of
+salt, as discussed above).
+From the above challenges we identify three main aspects a state of the art solution
+would miss: the interactive construction and explanation around a set of link predictions;
+the acquisition of feedback from the humans about facts and reasoning processes; and,
+finally, the progressive validation of this external knowledge based on consensus. In the
+next section we revisit Figure 1 and propose with Figure 3 an approach to position these
+missing blocks.
+6https://www.biorxiv.org/, Last accessed March 11th, 2022"
+hhai-2022_paper_67.pdf,6,"4. Proposal for an hybrid approach
+As outlined above, our target use-case of building an AI working together with Human
+doctor to refine a set of diagnosis hypothesis will face several challenges. We argued that
+state of the art approach would miss the target on some aspects and highlighted some
+major missing components. In Figure 3 we propose a more detailed version of Figure 1
+enhanced with those missing building blocks. We also replaced the emphasis on HITL
+processes by an emphasis on feedback loops within the system itself.
+Figure 3. Overview of the different functional components of the proposed end-to-end pipeline. This is here
+depicted from the point of view of the machine having a dialog with the Human but we can expect the alter-
+native view to follow the same logical process. What is worth highlighting in this diagram is the presence of
+feedback loop and components dedicated to supporting, and benefiting from, the interaction with the human.
+The different components serve different purposes along the same topics highlighted
+in Figure 1:
+Data is managed via a data access layer mapping the raw data into the Knowledge
+Graph. This mapping is informed by the ontology which is part of the personal
+knowledge of the agent. With this latter component the agent will also keep track
+of additional data not found in the input data. All the data goes through a contex-
+tualisation layer which sub-sets it to focus on a particular part most relevant to the
+current interaction with the Human user;
+Reasoning over the data means giving access to the input data via answering queries,
+and reasoning over the potential risks of such disclosure. It also means giving ac-
+cess to the link prediction task output is provided together with the explanations
+for it. The last aspect of reasoning is the validation which will act like a consen-
+sus reasoner taking a decision about trusting the external data gathered over time.
+These decisions may result in new ground truth for the personal knowledge or new
+facts to return to the input data as globally true facts.
+Interface with the user is around sharing data and insights as well as gathering feedback.
+This feedback is impacting the content of the personal knowledge by means of
+additional data and/or refinement of the ontology. Tentatively at first and more
+systematically later once the feedback has been validated."
+hhai-2022_paper_67.pdf,7,"As outlined earlier, Figure 3 keeps this focus on the use-case of consultation support,
+with the aim of working together with human medical doctors to refine a set of diagnosis
+hypothesis. But we are currently researching and implementing the same pipeline for an
+Industry X.0 [19] context. In this non healthcare related context the problem is however
+similar: consultants are tasked with figuring out which kind of solution set could tackle
+a particular challenge. Industry X.0 is a broad concept covering several aspects of the
+digital transformation of industries. Finding the best association set between solutions
+and challenges is a matter of a collective effort leveraging different opinion and expertise.
+Some parts of this proposed pipeline have already been put in production for busi-
+ness solutions [16] and some others have been more formally identified [20,21]
+Conclusion
+The future of AI is a collaboration between Human and Machine in order to leverage
+each other intelligence’s specific strength. In this context Knowledge Graphs can play a
+key role as a data integration tool and data model for reasoning We argue that however
+approaches such as ontology based data integration and link predication each tackle one
+of those two aspect as a distinct focus (creation versus usage of a KG) and propose to
+look for opportunities to connect them closer. Furthermore we note that in order to be
+adaptive and AI intelligence working in a hybrid context should have a focus on gath-
+ering feedback from humans as well as fellow machines, and reason over this feedback.
+Our proposal is a high level architecture made of Data, Reasoning and Feedback focused
+technical components addressing this opportunity. We more specifically instantiate this
+architecture on a particular task of hypothesis set curation and report on early implemen-
+tation and research work done for this architecture.
+References
+[1] Z. Akata, D. Balliet, M. de Rijke, F. Dignum, V . Dignum, G. Eiben, A. Fokkens, D. Grossi, K.V . Hin-
+driks, H.H. Hoos, H. Hung, C.M. Jonker, C. Monz, M.A. Neerincx, F.A. Oliehoek, H. Prakken,
+S. Schlobach, L.C. van der Gaag, F. van Harmelen, H. van Hoof, B. van Riemsdijk, A. van Wynsberghe,
+R. Verbrugge, B. Verheij, P. V ossen and M. Welling, A Research Agenda for Hybrid Intelligence: Aug-
+menting Human Intellect With Collaborative, Adaptive, Responsible, and Explainable Artificial Intelli-
+gence, Computer 53(8) (2020), 18–28. doi:10.1109/MC.2020.2996587.
+[2] D. Dellermann, P. Ebel, M. Soellner and J.M. Leimeister, Hybrid Intelligence (2021).
+doi:10.1007/s12599-019-00595-2.
+[3] H.J. Wilson and P.R. Daugherty, Robots Need Us More Than We Need Them, Harvard Business Review
+(2022). https://hbr.org/2022/03/robots-need-us-more-than-we-need-them .
+[4] A. Hogan, E. Blomqvist, M. Cochez, C. d’Amato, G. de Melo, C. Gutierrez, J.E.L. Gayo, S. Kir-
+rane, S. Neumaier, A. Polleres, R. Navigli, A.-C.N. Ngomo, S.M. Rashid, A. Rula, L. Schmelzeisen,
+J. Sequeda, S. Staab and A. Zimmermann, Knowledge Graphs (2020). doi:10.1145/3447772. https:
+//arxiv.org/abs/2003.02320.
+[5] X. Wilcke, P. Bloem and V .D. Boer, The knowledge graph as the default data
+model for machine learning (2017), 1–13. https://datasciencehub.net/paper/
+knowledge-graph-default-data-model-learning-heterogeneous-knowledge .
+[6] S. Auer, L. B ¨uhmann, C. Dirschl, O. Erling, M. Hausenblas, R. Isele, J. Lehmann, M. Martin,
+P.N. Mendes, B.V . Nuffelen, C. Stadler, S. Tramp and H. Williams, Managing the Life-Cycle of Linked
+Data with the LOD2 Stack, in: The Semantic Web - ISWC 2012 - 11th International Semantic Web Con-
+ference, Boston, MA, USA, November 11-15, 2012, Proceedings, Part II , P. Cudr´e-Mauroux, J. Heflin,"
+hhai-2022_paper_67.pdf,8,"E. Sirin, T. Tudorache, J. Euzenat, M. Hauswirth, J.X. Parreira, J. Hendler, G. Schreiber, A. Bern-
+stein and E. Blomqvist, eds, Lecture Notes in Computer Science, V ol. 7650, Springer, 2012, pp. 1–16.
+doi:10.1007/978-3-642-35173-0 1.
+[7] D. Chaves-Fraga, A. Dimou, P. Heyvaert, F. Priyatna and J.F. Sequeda (eds), Proceedings of the 2nd
+International Workshop on Knowledge Graph Construction co-located with 18th Extended Semantic
+Web Conference (ESWC 2021), Online, June 6, 2021, in CEUR Workshop Proceedings , V ol. 2873,
+CEUR-WS.org, 2021. http://ceur-ws.org/Vol-2873.
+[8] G. Fletcher, P. Groth and J.F. Sequeda, Knowledge Scientists: Unlocking the data-driven organization,
+CoRR abs/2004.07917 (2020). https://arxiv.org/abs/2004.07917.
+[9] F. van Harmelen and A. ten Teije, A Boxology of Design Patterns for Hybrid Learning and Reasoning
+Systems (2019). doi:10.13052/jwe1540-9589.18133.
+[10] J.F. Sequeda, W.J. Briggs, D.P. Miranker and W.P. Heideman, A Pay-as-you-go Methodology to Design
+and Build Enterprise Knowledge Graphs from Relational Databases, in: The Semantic Web - ISWC
+2019 - 18th International Semantic Web Conference, Auckland, New Zealand, October 26-30, 2019,
+Proceedings, Part II, C. Ghidini, O. Hartig, M. Maleshkova, V . Sv ´atek, I.F. Cruz, A. Hogan, J. Song,
+M. Lefranc ¸ois and F. Gandon, eds, Lecture Notes in Computer Science, V ol. 11779, Springer, 2019,
+pp. 526–545. doi:10.1007/978-3-030-30796-7 32.
+[11] PoolParty, An Enterprise Knowledge Graph Life Cycle - A Sum-
+mary - PoolParty Manual 8.1. https://conf-doc.poolparty.biz/pp/
+white-papers-release-notes/poolparty-technical-white-paper/
+an-enterprise-knowledge-graph-life-cycle-a-summary .
+[12] D. Cahalane, A. Kouznetsov and C. Gu ´eret, Knowledge Graphs to help with Data-driven Clinical
+Decision-making, in: Proceedings of the ISWC 2021 Posters, Demos and Industry Tracks: From Novel
+Ideas to Industrial Practice co-located with 20th International Semantic Web Conference (ISWC 2021),
+Virtual Conference, October 24-28, 2021, O. Seneviratne, C. Pesquita, J. Sequeda and L. Etcheverry, eds,
+CEUR Workshop Proceedings, V ol. 2980, CEUR-WS.org, 2021.http://ceur-ws.org/Vol-2980/
+paperx.pdf.
+[13] J.G. Richens, C.M. Lee and S. Johri, Counterfactual diagnosis (2019). doi:10.48550/arxiv.1910.06772.
+http://arxiv.org/abs/1910.06772.
+[14] L. Costabello, S. Pai, C.L. Van, R. McGrath, N. McCarthy and P. Tabacof, AmpliGraph: a Library for
+Representation Learning on Knowledge Graphs, 2019. doi:10.5281/zenodo.2595043.
+[15] M.T. Keane and E.M. Kenny, How Case-Based Reasoning Explains Neural Networks: A Theoretical
+Analysis of XAI Using Post-Hoc Explanation-by-Example from a Survey of ANN-CBR Twin-Systems,
+Lecture Notes in Computer Science (2019), 155–171–. ISBN 9783030292492. doi:10.1007/978-3-030-
+29249-2 11.
+[16] M. Kujawinski, C. Gu ´eret, C. Kumar, B. Woods, P. Klinov and E. Sirin, On Constructing Enterprise
+Knowledge Graphs Under Quality and Availability Constraints, in: The Semantic Web - ISWC 2021 -
+20th International Semantic Web Conference, ISWC 2021, Virtual Event, October 24-28, 2021, Pro-
+ceedings, A. Hotho, E. Blomqvist, S. Dietze, A. Fokoue, Y . Ding, P.M. Barnaghi, A. Haller, M. Drag-
+oni and H. Alani, eds, Lecture Notes in Computer Science, V ol. 12922, Springer, 2021, pp. 699–713.
+doi:10.1007/978-3-030-88361-4 41.
+[17] F. Bianchi, G. Rossiello, L. Costabello, M. Palmonari and P. Minervini, Knowledge Graph Embeddings
+and Explainable AI, in: Knowledge Graphs for eXplainable Artificial Intelligence: Foundations, Appli-
+cations and Challenges, IOS Press, 2020, pp. 49–72.
+[18] G. Plumb, J. Terhorst, S. Sankararaman and A.S. Talwalkar, Explaining Groups of Points in Low-
+Dimensional Representations, Proceedings of machine learning research119 (2020), 7762–7771.
+[19] E. Schaeffer, INDUSTRY X.0, Realizing digital value in industrial sectors , 2022. https://www.
+accenture.com/sg-en/insight-realizing-digital-value-industrial .
+[20] C. Gueret and L. Costabello, Systems and methods providing evolutionary generation of embeddings
+for predicting links in knowledge graphs, 2021, US Patent App. 16/590,738.
+[21] F. Lecue, C.D.M. Gueret and D.J. Cahalane, Knowledge graph weighting during chatbot sessions, 2021,
+US Patent 11,126,919."
+Legal-Ethical_Challenges_and_Technological_Solutio.pdf,1,"Legal-Ethical Challenges and
+Technological Solutions to e-Health Data
+Consent in the EU
+Xengie DOANa,1, Marcu FLOREAb, and Sarah E. CARTERc,d
+a SnT, University of Luxembourg
+b University of Groningen, the Netherlands
+c Data Science Institute and the Discipline of Philosophy, University of Galway, Ireland
+d SFI Centre for Research Training in Digitally-Enhanced Reality (D-Real), Ireland
+ORCiD ID: Xengie Doan https://orcid.org/0000-0002-8245-1555, Marcu Florea
+https://orcid.org/0000-0002-0319-8935, Sarah E. Carter
+https://orcid.org/0000-0003-3621-5962
+Abstract. e-Health data is sensitive and consenting to the collection, processing,
+and sharing involves compliance with legal requirements, ethical standards, and
+appropriate digital tools. We explore two legal-ethical challenges: 1) What are the
+scope and requirements of digital health data consent? 2) What are the legal-ethical
+reasons for obtaining consent beyond the GDPR’s legal basis, and how might such
+consent be obtained? We then propose human-centered solutions to help navigate
+standards of ethical and legal consent across the EU, purposefully addressing those
+use cases to compensate for human difﬁculties in managing consent without clear
+guidelines. These solutions – including ISO standards, ontologies, consent mecha-
+nisms, value-centered privacy assistants, and layered dynamic consent platforms –
+complement and aid humans to help uphold ethical and rigorous consent.
+Keywords. e-health, dynamic consent, privacy assistants, legal-ethical challenges
+1. Introduction
+Consent stems from medical consent as an ethical concept (hereafter called “ethical con-
+sent”) from the 1970s with the principle of respect for autonomy and the dignity of per-
+sons. Respect for autonomy is enshrined in ethical guidelines such as the Belmont Report
+[1] and the Declaration of Helsinki [2]. This understanding of respect for autonomy has
+been operationalized asinformed consent[3], which requires that participants in medical
+research are informed in a sufﬁciently comprehensive and understandable manner (such
+as with a notice or information sheet) and that they are not manipulated [4]. Ethics also
+interacts with the legal dimensions of consent. With a transition to health data sharing
+using digital technologies (hereafter referred to as “e-health”), a rise in the accessibility
+of genetic testing, and the advent of AI technologies moving health data away from an
+1Corresponding Author: Xengie Doan, xengie.doan@uni.lu.
+HHAI 2023: Augmenting Human Intellect
+P. Lukowicz et al. (Eds.)
+© 2023 The Authors.
+This article is published online with Open Access by IOS Press and distributed under the terms
+of the Creative Commons Attribution Non-Commercial License 4.0 (CC BY-NC 4.0).
+doi:10.3233/FAIA230088
+243"
+Legal-Ethical_Challenges_and_Technological_Solutio.pdf,2,"exclusively medical context, ethics’ interplay with laws has generated more complexi-
+ties.
+In the European Union (EU), the General Data Protection Regulation (GDPR) sets
+rather strict conditions for obtaining consent (hereafter referred to as “legal consent”) [5].
+In addition, health data are considered special under the GDPR because of their sensitiv-
+ity, requiring more stringent protections and conditions for processing, including explicit
+consent (Art. 9 GDPR). The GDPR aims to protect the identiﬁed or identiﬁable natural
+persons whose data is processed (“data subject”) by regulating the processing of personal
+data and reconciling individual control with other rights and interests at stake. However,
+the rules are difﬁcult to comply with for researchers and companies and exercising rights
+requires much effort on the part of the data subject who must read, understand, and de-
+cide on the processing of their personal data.
+Additionally, the newly enacted Data Governance Act (DGA) aims to improve data
+sharing in the EU by creating a harmonized framework for data exchanges and data
+governance [6]. The DGA introduces new concepts such as data intermediaries and data
+cooperatives and regulates the voluntary sharing of data for “altruistic purposes” and the
+provision of services assisting individuals in giving and withdrawing consent. Thus, the
+new regulation increases uncertainty regarding how altruism interferes with the GDPR’s
+legal grounds for processing personal data or how data intermediaries or cooperatives
+will enable individuals to express their privacy choices [7].
+As such legal-ethical complexities build in e-health data consent, consent manage-
+ment solutions need to adapt to address the interests of data subjects and data controllers.
+In particular, such tools should address these interests in a human-centered, responsi-
+ble manner to maximize human autonomy, promote lawfulness, and increase the trans-
+parency of data sharing and associated rights.
+In our contribution, we discuss two legal-ethical issues: 1) What are the legal-ethical
+challenges regarding the scope and requirements for e-health data consent? 2) What are
+the legal-ethical reasons for obtaining consent beyond its role as a legal basis? Then, we
+describe available technological solutions and our work in the sphere. Our position is that
+the implementation of more interoperable, value-centered, and dynamic tools can assist
+humans in obtaining appropriately ethical and rigorous e-health data consent by helping
+them navigate legal-ethical uncertainties and challenges.
+2. (Un)deﬁned Requirements for Consent
+2.1. Upholding Autonomy as an Ethical Principle for Digital Health Data
+The rise of e-health data sharing has further muddied ethical debates regardinghow
+to, when to, and from whom to obtain consent in order to uphold autonomy. While
+paper-based consent was debated in terms of understandability and transparency, data-
+collecting digital medicine devices add unique challenges. They contain often long and
+jargon-ﬁlled user agreements and introduce a layer of consent between company and pa-
+tient [8]. For example, some smartphone mobile health (“mHealth”) apps allow health
+data traditionally reserved for the doctor and patient to be accessible for other commer-
+cial purposes, such as third-party marketing [9]. Apps may also lack privacy policies and
+terms of agreements altogether, and if present, are difﬁcult to read and comprehend [10].
+X. Doan et al. / Legal-Ethical Challenges and Technological Solutions244"
+Legal-Ethical_Challenges_and_Technological_Solutio.pdf,3,"Unlike more rigid consent practices in medicine, this data is given with a click of a pri-
+vacy permission request on a smartphone, often with little understanding of what is being
+given away [11]. From an ethical perspective, this raises concerns about how informed
+an individual’s consent is and skepticism that it upholds the principle of autonomy.
+2.2. Who is the Genetic Data Subject?
+Health data is sensitive due to the interconnected nature of the data. Here, we focus on
+a highly connected and identiﬁable subset of e-health data, genomic data. With millions
+sequencing their DNA due to increased accessibility [12], distributed privacy risks have
+become even greater [13,14]. While there are varying guidelines across countries for
+giving notice to family members that their shared genetic data is being processed [15],
+from an ethical perspective, Minari et al. [16] argues for a form of family-group consent
+for genetic data processing because of shared risks.
+Legally, a genetic group as a data subject is considered in guidelines but enforcement
+is unclear. The European Data Protection Board (EDPB) guidelines on genetic data state
+that data subjects can be families [17]. However, individual and collective enforcement
+under the GDPR is complex [18] due to the possibility of conﬂicting rights, such as the
+right to object to processing from one individual [19], theright not to know [20,21],
+or the right to process their data. There is little existing guidance on how to resolve
+such conﬂicts and is an area of active debate [22,19]. It has been argued that managing
+conﬂicts is feasible [23] with the GDPR as a starting point. In addition, different countries
+have various approaches to weighing the rights of all parties based on the context and
+existing rulings (e.g. the right to privacy of the deceased is overruled by the right to
+health of the living [24]) and laws. This may also help data minimization principles by
+limiting data sharing and access to only well-justiﬁed cases [23]. While ethical and legal
+guidelines may allow for a collective interpretation, this challenges the status quo of
+individual consent and further complicates GDPR enforcement.
+2.3. Speciﬁcity in Consent: Purposes and Controllers
+While consent must be “speciﬁc, informed, and freely given” (Art. (4)(11) GDPR), guide-
+lines around purpose speciﬁcity from a legal-ethical perspective are unclear or contradic-
+tory. First, speciﬁcity is arguably at odds with broad consent models used in biomedical
+research. Broad consent refers to consent for speciﬁc and general future purposes, while
+speciﬁc consent refers to consent for an explicit purpose. From an ethical perspective,
+broad consent could be acceptable if the individual is provided sufﬁcient knowledge to
+be informed [4] – although whether current e-health consent meets these criteria and
+upholds autonomy is debatable. Second, though data protection law mandates speciﬁc
+consent, issues regarding interpretation remain. For example, too narrow an interpreta-
+tion of speciﬁcity may lead to frequent re-consent from data subjects and induce consent
+fatigue [25]. Also, Recital 33 GDPR acknowledges that it is often impossible to identify
+all purposes of personal data processing for scientiﬁc research at the time of data col-
+lection and offers a solution of consent for ”certain areas of scientiﬁc research when in
+keeping with recognized ethical standards”. However, this is not reﬂected in the text of
+the GDPR itself, which advocates for speciﬁcity, and is open to different interpretations
+of scope and application [26,27,28].
+X. Doan et al. / Legal-Ethical Challenges and Technological Solutions 245"
+Legal-Ethical_Challenges_and_Technological_Solutio.pdf,4,"For consent to be valid, the data subject should also be given the identity of the entity
+that decides on the means and purpose of the processing (“data controller”) (Recital 42
+GDPR). However, this can be difﬁcult to identify at the time of initial collection and
+the text of the GDPR is not clear on the elements that must be provided. While Article
+13(1)(a) GDPR and Recital 42 GDPR require that the identity of the data controller to
+be disclosed, Article 13(1)(e) suggests that the entities that process personal data can
+be clustered based on relevant criteria by referring to information about recipients or
+”categories of recipients”. The notion of ”recipient” (Art. 4(9) GDPR) can include third
+parties, but also controllers and processors, rendering the contents for the obligation
+to inform uncertain. The new DGA [6] further complicates the recipient’s identity. In
+complex data-sharing environments, it is unclear whether re-consent should be asked
+when additional persons become involved in the data processing. Such persons include
+those who process personal data on behalf of the data controller (“data processors”),
+additional data controllers, or new third parties that become involved after initial consent.
+In summary, the debates about how to uphold autonomy as an ethical principle, if
+a genetic data subject under the GDPR can be collective, and how speciﬁc consent is
+regarding purposes and the data controllers all lack guidelines for e-health consent.
+3. Consent is Relevant, Even When Not the Legal Basis
+Even when consent is not the legal basis for processing data (Art. 6(1)(c)-(f) GDPR),
+such as legitimate interest, or the data falls under an exception for processing health
+data (Art. 9(2)(i)(j) GDPR), such as public health, ethical consent is relevant due to the
+possible legal consequences as an ethical standard or safeguard. Such data processing
+is subject to a balancing exercise based on the proportionality of interests and rights of
+the data subject and processor, which often requires the implementation of safeguards
+to help protect rights. Recital 33 of the GDPR refers to ”recognized ethical standards”
+but lacks details or references. Then, Art. 9(2)(j) GDPR provides that health data can be
+processed for scientiﬁc research purposes based on Union or Member State law provided
+that appropriate safeguards are in place. Next, Article 89 of the GDPR also requires
+safeguards when data is processed for research purposes, but again the text lacks any
+deﬁnitions. In another instrument in the EU [29] or outside the EU [20,2,30], consent
+is a condition for participation in biomedical research. Commenting on the safeguards
+in the GDPR, Staunton et. al. [31] argues that ethical requirements such as consent and
+transparency could serve as safeguards to help inform the data subject of their rights.
+The distinction between consent for research and consent for processing personal
+data must also be clearly communicated, and possibly combined through consent man-
+agement platforms (CMPs). The EDPB [32] differentiates between the functions wherein
+consent for participation in researchprotects human dignity and the right to integrity of
+individuals while consent for processing of personal datais a requirement connected to
+the right to protection of personal data. The European Data Protection Supervisor (EDPS)
+also notes this separation and argues that informed consent can function as a safeguard
+for data subject rights’ in medical research [27]. The Commission DG Research & In-
+novation Guidance suggests that consent for lawfully processing personal data and in-
+formed consent for research could be integrated with CMPs to increase transparency to
+the data subject when it is difﬁcult to identify the purpose of the research [33]. While
+X. Doan et al. / Legal-Ethical Challenges and Technological Solutions246"
+Legal-Ethical_Challenges_and_Technological_Solutio.pdf,5,"CMPs can more transparently communicate processes and rights to data subjects, they
+can also confuse data subjects. If individuals provide their informed consent to partici-
+pation in biomedical research, it might come as a surprise that the ground for processing
+personal data is not consent. If the distinction is not made clear, it might give the false
+impression that the data subject is in control. For example, the data subjects do not have
+the right to withdraw consent (Art. 7(3) GDPR) or the right to data portability (Art. 20
+GDPR) when consent is not the legal basis for processing data. Therefore, consent as a
+safeguard should be clearly explained to data subjects and differentiated from consent as
+a legal basis. Overall, it remains unclear whether the proposed CMPs would comply with
+the current requirements of legal consent or act as a legal safeguard, and if this could
+extend to cases for general health data sharing and not only for biomedical research.
+From an ethical standpoint, one can argue that ethical consent in e-health should
+always be part of health data collection to uphold autonomy. The Belmont Report argues
+for respect for autonomy as a critical component of upholding human dignity through
+Principlism [34]. However, autonomy and ethical consent have been critiqued by bioethi-
+cist Onora O’Neill [35] who argued that this interpretation diminishes trust, wherein doc-
+tors value legal compliance more than true empathetic communication. It has also been
+critiqued for undervaluing collective concerns in favor of individual considerations. For
+example, one individual’s consent to sharing genetic data may implicate genetic rela-
+tives without their knowledge through data breaches [36], yet despite these shared risks,
+only one individual consented. Despite these concerns about the Belmont Report’s opera-
+tionalization of autonomy into individual informed consent, few would argue that respect
+for autonomy is not worth upholding — but it may require a different ethical justiﬁcation.
+Respect for autonomy can also be rooted in Flourishing Ethics (FE) [37,38], which pro-
+poses that the pursuit and promotion of human ﬂourishing is the ultimate ethical “good.”
+FE brings together a group of related understandings in computer and information ethics
+that have this idea of human ﬂourishing as their primary ethical concern [39,40,41,42].
+In FE, “autonomy” is viewed as a requirement for human beings to ﬂourish [38]. In
+psychology, theories exploring psychological well-being such as self-determination the-
+ory (SDT) translate philosophical understandings of human ﬂourishing and autonomy
+[43]. SDT postulates that designing autonomous digital interactions requires interfaces
+or assistive technologies to promote both a user’s sense of agency and consistency with
+a user’s values, goals, and sense of purpose [44,43]. In the case of health data, notice
+and consent (though ﬂawed) allow an exercise of autonomy on the ﬂow of their data to
+shape an increasingly important aspect of modern life: one’s digital footprint. Forgoing
+this control, or coercing it, could undermine human ﬂourishing [41].
+4. T echnological Solutions to Ethical-Legal Challenges
+In this section, we identify and discuss technological solutions that we believe can help
+tackle the above ethical-legal challenges in e-health consent. We provide a critical anal-
+ysis of existing solutions and our work towards more dynamic, transparent, and value-
+centered consent. These solutions center collaborations between technology and humans
+(data controllers, processors, subjects) to promote agency and value-centered choices.
+X. Doan et al. / Legal-Ethical Challenges and Technological Solutions 247"
+Legal-Ethical_Challenges_and_Technological_Solutio.pdf,6,"4.1. Technical Standards, Ontologies, and Mechanisms for Consent
+To address the lack of guidelines for speciﬁc consent and purpose speciﬁcation in Sec.
+2.3, we look towards technical standards from the International Organization for Stan-
+dardization (ISO) and ontologies built by expert communities. To address the role of
+consent even when it is not the legal basis from Sec. 3, consent mechanisms with options
+to object to data processing by legitimate interest will be analyzed.
+First, ISO/IEC 29184 describes the structure and content of online consent and pri-
+vacy notices to collect and process personally identiﬁable individual data. It outlines how
+to communicate transparent and understandable information about the data collection
+and processing, as well as how to obtain consent to be “fair , demonstrable, transparent,
+unambiguous and revocable” [45]. It has also been shown to enable compliance with the
+GDPR [46] and could be compatible with the DGA, which requires the development of
+an altruistic consent form at the EU level available in an electronic, machine-readable
+form using a modular, customizable approach for speciﬁc sectors and purposes (Art. 22
+DGA). However, as a closed standard with licensing fees, adoption by individuals or
+institutions with fewer resources may be difﬁcult.
+Second, the ISO standard suggests using consent policies based on standardized se-
+mantic vocabularies, such as the World Wide Web Consortium’s (W3C’s) Data Privacy
+V ocabulary (DPV) [47], which can also aid in the speciﬁcity of consent. The semantic
+web is an effort from W3C to make the internet machine-readable and enable a web
+of linked data with vocabularies, query languages, and more. The DPV is an ontology
+about the use and processing of personal data with terms including processing purposes.
+Ontologies can be extended for different use cases (e.g., a GDPR compliant extension
+of the DPV [48]) or mapped to other compliant ontologies [49,50]. They could also cre-
+ate “parts of research projects” to offer categories instead of single choices (Recital 33
+GDPR). As an open-source technology, organizations can contribute and help address
+their use cases or map the logic of DPV to other ontologies. For example, terms in the
+DPV can be mapped with concepts in the Data Use Ontology (DUO) [51]. Created by the
+Global Alliance for Genomics and Health, DUO addresses data sharing after consent and
+increases the FAIRness (ability to be ﬁndable, accessible, interoperable, and reusable)
+[52]. Other health ontologies [53,54,55] could be mapped and connected to standardize
+consent, data sharing, e-health records, and other health processes. While more work is
+required to make ontologies such as DPV applicable to more health data-sharing situ-
+ations, we can envision an interoperable future for privacy, consent, data sharing, and
+legal compliance based on extensive open vocabularies. This can also help automate the
+activity of data intermediaries or cooperatives regulated under the DGA.
+Third, these standards and ontologies can be communicated through the web us-
+ing Data Protection and Consenting Communication Mechanisms (DPCCMs), contain-
+ing the “communication of data, metadata, information, preferences, or/and decisions
+related to data protection or/and consenting between different actors” that can be used
+on the web or apps [56]. Examples include Do Not Track or Advanced Data Protection
+Control (ADPC). ADPC is more complex than a binary track or do not track, and can ex-
+press the speciﬁc purpose along with the consent decision and object to processing based
+on legitimate interest. These technologies could also have a role in compliance with data
+protection law as it offers a way to object to processing when consent is not the legal
+ground for processing. Furthermore, ADPC could incorporate more complex values such
+X. Doan et al. / Legal-Ethical Challenges and Technological Solutions248"
+Legal-Ethical_Challenges_and_Technological_Solutio.pdf,7,"as consent preferences, thereby enabling personalization across platforms using ADPC.
+However, some challenges still remain. There is no standardized process for developing
+the vocabularies regarding the values in ADPC, and adoption of such DPCCMs remains
+challenging, as with the obsolescence of Platform for Privacy Preferences Project (P3P)
+[57]. DPCCMs could contribute to a more central ecosystem of consent to facilitate pur-
+pose speciﬁcation, processing entities, and privacy proﬁles. While ADPC could enable
+increased autonomy through the ability to object to processing when the legal basis is le-
+gitimate interest, the rights could still be obscured if the consent mechanism is not widely
+adopted. Similarly, while guidelines for speciﬁc consent are part of ISO standards and
+ontologies can increase speciﬁcity, a more uniﬁed and interoperable consent ecosystem
+requires social factors to gain traction outside the scope of this paper.
+4.2. Ethical and User-Friendly Privacy Assistants
+We can also consider technological assistants to better promote autonomy, value-centered
+choices, and human ﬂourishing in smartphone mHealth settings (Secs. 2.1 and 3). When
+apps are collecting health data, personalized privacy assistants (PP As) could help em-
+power humans to navigate consent permissions and promote more autonomous action.
+Smartphone PP As use a decision tree to ask the user a series of privacy preference ques-
+tions and determine their privacy preference proﬁle. From this proﬁle, PP As provide
+the user with privacy setting notiﬁcations and privacy setting recommendations for the
+apps on their phone [58]. For users who use mHealth apps, such recommendations could
+remind them of their privacy preferences when they may have “clicked through” per-
+mission settings when downloading the app. Infrastructure for PP As for the Internet of
+Things (IoT) has also been proposed, and such a system could help users manage data
+collected by complex, multi-system health sensors or medical devices by giving them
+similar notiﬁcations and recommendations [59].
+A related system under development is the value-centered privacy assistant (VcP A)
+[60], which aims to promote value-centered choices at the root of human wellbeing and
+ﬂourishing [44,43]. Proﬁles are based on how a user’s personal values are involved in
+their app selection and privacy decision-making by mapping values onto acceptable data
+collection practices [61]. Notiﬁcations occur before downloading an app from the app
+store. These notiﬁcations serve as ”selective friction” to warn users when they may be
+downloading an app that conﬂicts with their value set as determined by their proﬁle. It
+also recommends alternative applications with similar functions that are more consistent
+with a user’s values.
+Both systems encourage users to exercise their autonomy when engaging with
+mHealth apps by assisting them with data privacy decisions that they may otherwise
+quickly click through or struggle to comprehend the privacy policies and terms of agree-
+ment [10,11]. This more judicious use of collaborative technologies, by promoting au-
+tonomy, furthers human well-being and ﬂourishing in the e-health data space [43].
+4.3. Layered User-centered Dynamic Consent
+Last, dynamic consent (DC) can incorporate the above technologies, enable autonomy,
+and increase speciﬁcity of consent regarding the genetic data subject (individual and
+collective), data processing purposes, and processing entities in Sec. 2. DC is a model
+X. Doan et al. / Legal-Ethical Challenges and Technological Solutions 249"
+Legal-Ethical_Challenges_and_Technological_Solutio.pdf,8,"of consent and digital platform centering data subjects in facilitating consent over time
+[62,63,64]. DC can request speciﬁc consent over time as data processing or the controller
+changes and be layered in terms of the type of consent (speciﬁc or broad) or information,
+allowing users to choose the depth of information and type of consent they prefer. On
+such systems, perhaps speciﬁc consent could be the default, with a layered approach
+that ﬁrst shows key information and then offers more detailed information with broad
+consent as a secondary option. It could be personalized based on the data controller and
+data subject’s legal jurisdiction, privacy preferences, and values – with value–centered
+privacy assistants to help make decisions. Similarly, collective speciﬁc consent could be
+a default for genetic data sharing unless the individual chooses broad consent, and in the
+case of conﬂicting rights speciﬁc and granular rights can be carried out and relayed to
+the data collector to resolve issues more transparently.
+As a platform, DC can also incorporate ISO standards, consent ontologies, and
+shared consent mechanisms. If multiple DC platforms use interoperable ontologies
+and/or consent mechanisms, a more uniﬁed consent management system could be en-
+visioned. However, work from the technological side is needed to suit more use cases
+and larger societal challenges stand in the way of adopting shared technologies. To this
+end, Author 1 is working to identify and validate non-functional requirements for col-
+lective DC and propose an interoperable and transparent model of collective DC based.
+This work is based on research on consent which theorizes on collective DC but lacks
+technical proposals [65,16] and a user study regarding key elements of consent [66]. Au-
+thor 2 is working on the role of a DC model in compliance with GDPR and the DGA to
+improve transparency and safeguard the interests of the data subjects while enabling the
+free ﬂow of personal data in a biomedical context. Author 3 is exploring how our values
+are involved in our smartphone data privacy decisions in order to best design, deploy,
+and time privacy notices based on values. The initial conceptual groundwork has been
+laid and the aforementioned VcP A is under development [60,61]. A forthcoming paper
+will identify points of improvement for the VcP A in order to best assist users in making
+a privacy decision consistent with their privacy preferences and values.
+5. Conclusion
+Technology can work to manage ethical-legal consent challenges for e-health data, es-
+pecially when human needs are centered and not legal-ethical compliance. We build on
+consent standards, ontologies, and mechanisms, privacy assistants working with users’
+values to manage consent decisions, and propose layered (collective and/or individual)
+dynamic consent to enhance autonomy and speciﬁcity. Some technologies still require
+further development to truly address the challenges, and the authors are researching le-
+gal, ethical, and technical aspects in their future work. From this, the wider adoption of
+these solutions could not only tackle ongoing legal-ethical ambiguity within the EU but
+also lay the foundation for cross-border health data transfers between different countries.
+Despite differing guidelines and requirements, a united technological front and deploy-
+ment of human-centered tools for e-health management could help provide the basis for
+greater communication, understanding, and harmonization between jurisdictions.
+Acknowledgments. This work is ﬁnancially supported by EU H2020 projects LeADS
+(Grant ID:956562) and KnowGraphs (Grant ID:860801) and SFI CRT d-real (Grant
+No. 18/CRT/6224). We also thank Cost EU PIDSKG Workshop CA19134.
+X. Doan et al. / Legal-Ethical Challenges and Technological Solutions250"
+Legal-Ethical_Challenges_and_Technological_Solutio.pdf,9,"References
+[1] Ryan KJ, Brady JV , Cooke RE, Height DI, Jonsen AR, King P , et al. The Belmont Report. Washington
+D.C.: US Department of Health, Education, and Welfare; 1979.
+[2] World Medical Association. Declaration of Helsinki, ethical principles for scientiﬁc requirements and
+research protocols; 2013. 4.
+[3] Beauchamp TL. Informed consent: its history, meaning, and present challenges. Cambridge Quarterly
+of Healthcare Ethics. 2011;20(4):515-23.
+[4] Childress JF. The Place of Autonomy in Bioethics. The Hastings Center Report. 1990;20(1):12-7.
+[5] Regulation (EU) 2016/679 (General Data Protection Regulation). vol. 119; 2016. Available from:http:
+//data.europa.eu/eli/reg/2016/679/oj/eng.
+[6] Regulation (EU) 2022/868 of the European Parliament and of the Council of 30 May 2022 on European
+data governance and amending Regulation (EU) 2018/1724 (Data Governance Act); 2022. Available
+from:https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:52020PC0767 .
+[7] Solove DJ. Introduction: Privacy self-management and the consent dilemma. Harv L Rev.
+2012;126:1880.
+[8] Klugman CM, Dunn LB, Schwartz J, Cohen IG. The Ethics of Smart Pills and Self-Acting Devices:
+Autonomy, Truth-Telling, and Trust at the Dawn of Digital Medicine. American Journal of Bioethics.
+2018;18(9):38-47. Available from:https://doi.org/10.1080/15265161.2018.1498933.
+[9] Lucivero F, Jongsma KR. A mobile revolution for healthcare? Setting the agenda for bioethics. Journal
+of Medical Ethics. 2018;44(10):685-9.
+[10] Robillard JM, Feng TL, Sporn AB, Lai JA, Lo C, Ta M, et al. Availability, readability, and content of
+privacy policies and terms of agreements of mental health apps. Internet interventions. 2019;17:100243.
+[11] Kelley PG, Cranor LF, Sadeh N. Privacy as part of the app decision-making process. In: Bødker S,
+Brewster S, Baudisch P , Beaudouin-Lafon M, Mackay WE, editors. Proceedings of the Conference on
+Human Factors in Computing Systems (CHI). Paris: ACM; 2013. p. 3393-402.
+[12] Mardis ER. A decade’s perspective on DNA sequencing technology. Nature. 2011;470(7333):198-203.
+[13] Bonomi L, Huang Y , Ohno-Machado L. Privacy challenges and research opportunities for genomic data
+sharing. Nature genetics. 2020;52(7):646-54.
+[14] Erlich Y , Shor T, Pe’er I, Carmi S. Identity inference of genomic data using long-range familial searches.
+Science. 2018;362(6415):690-4.
+[15] Takashima K, Maru Y , Mori S, Mano H, Noda T, Muto K. Ethical concerns on sharing genomic data
+including patients’ family members. BMC Medical Ethics. 2018 Jun;19(1):61.
+[16] Minari J, Teare H, Mitchell C, Kaye J, Kato K. The emerging need for family-centric initiatives for
+obtaining consent in personal genome research. Genome Medicine. 2014 Dec;6(12):118.
+[17] 12178/03/EN WP 91 Working Document on Genetic Data; 2004. Available from: https:
+//ec.europa.eu/justice/article-29/documentation/opinion-recommendation/files/
+2004/wp91_en.pdf.
+[18] Kuru T. Genetic data: The Achilles’ heel of the GDPR? Eur Data Prot L Rev. 2021;7:45.
+[19] Kuru T, de Miguel Beriain I. Y our genetic data is my genetic data: Unveiling another enforcement issue
+of the GDPR. Computer Law & Security Review. 2022;47:105752.
+[20] of Europe C. Convention for the Protection of Human Rights and Dignity of the Human Being with
+regard to the Application of Biology and Medicine: Convention on Human Rights and Biomedicine;
+1997. Available from:https://rm.coe.int/168007cf98.
+[21] UNESCO. Universal Declaration on the Human Genome and Human
+Rights;. Available from: https://www.unesco.org/en/legal-affairs/
+universal-declaration-human-genome-and-human-rights .
+[22] Knoppers BM, Kekesi-Lafrance K. The Genetic Family as Patient? American Journal of Bioethics.
+2020 Jun;20(6):77–80.
+[23] Beriain IDM, Jove D. Is it possible to place limits on the self-determination of your own genetic data?
+Certainly, and there is an urgent need for it! BioLaw Journal-Rivista di BioDiritto. 2021;(1S):209-22.
+[24] per la Protezione dei Dati Personali G. Dati inerenti allo stato di salute - dati genetici, Cittadini e socie-t`a
+dell’informazione; 1999. Available from:https://www.garanteprivacy.it/documents/10160/
+10704/996886.
+[25] Choi H, Park J, Jung Y . The role of privacy fatigue in online privacy behavior. Computers in Human
+Behavior. 2018;81:42-51.
+X. Doan et al. / Legal-Ethical Challenges and Technological Solutions 251"
+Legal-Ethical_Challenges_and_Technological_Solutio.pdf,10,"[26] for German Supervisory Authorities A. Guidance on the interplay between recital 33 and the deﬁnition
+of consent in the GDPR; 2019. Available from: https://www.datenschutzkonferenz-online.
+de/media/dskb/20190405_auslegung_bestimmte_bereiche_wiss_forschung.pdf.
+[27] Supervisor EDP . Preliminary Opinion on data protection and scientiﬁc research; 2023. Available
+from: https://edps.europa.eu/data-protection/our-work/publications/opinions/
+preliminary-opinion-data-protection-and-scientific_en .
+[28] Hallinan D. Broad consent under the GDPR: an optimistic perspective on a bright future. Life
+Sciences, Society and Policy. 2020 Jan;16(1):1. Available from: https://doi.org/10.1186/
+s40504-019-0096-3.
+[29] Regulation (EU) No 536/2014 of the European Parliament and of the Council of 16 April 2014 on
+clinical trials on medicinal products for human use, and repealing Directive 2001/20/EC. vol. 158; 2014.
+Available from:http://data.europa.eu/eli/reg/2014/536/oj/eng.
+[30] Assembly WG. WMA Declaration of Taipei on Ethical Considerations Regarding Health Databases
+and Biobanks; 2016. Available from: https://www.wma.net/what-we-do/medical-ethics/
+declaration-of-taipei/.
+[31] Staunton C, Slokenberga S, Mascalzoni D. The GDPR and the research exemption: considera-
+tions on the necessary safeguards for research biobanks. European Journal of Human Genetics.
+2019 Aug;27(8):1159-67. Number: 8 Publisher: Nature Publishing Group. Available from:https:
+//www.nature.com/articles/s41431-019-0386-5 .
+[32] Opinion 3/2019 concerning the Questions and Answers on the interplay between the Clinical Trials
+Regulation (CTR) and the General Data Protection regulation (GDPR) | European Data Protection
+Board; 2019. Available from: https://edpb.europa.eu/our-work-tools/our-documents/
+opinion-art-70/opinion-32019-concerning-questions-and-answers_en .
+[33] European Commission DG Research & Innovation. Ethics and data protection; 2021. Available
+from: https://ec.europa.eu/info/funding-tenders/opportunities/docs/2021-2027/
+horizon/guidance/ethics-and-data-protection_he_en.pdf .
+[34] Beauchamp TL, Rauprich O. Principlism. In: ten Have H, editor. Encyclopedia of Global Bioethics.
+Champlain: Springer; 2016. p. 1-12.
+[35] O’Neill O. Autonomy and Trust in Bioethics. Cambridge: Cambridge University Press; 2002. Avail-
+able from: https://www.cambridge.org/core/product/identifier/9780511606250/type/
+book.
+[36] NortonLifeLock. MyHeritage data breach exposes info of more than 92 million
+users; 2018. Available from: https://us.norton.com/blog/emerging-threats/
+myheritage-data-breach-exposes-info-of-more-than-92-million-user .
+[37] Bynum TW . The foundation of computer ethics. Computers and Society. 2000;30(2):6-13.
+[38] Bynum TW . Flourishing ethics. Ethics and Information Technology. 2006;8(4):157-73.
+[39] Kantar N, Bynum TW . Global ethics for the digital age – ﬂourishing ethics. Journal of Information,
+Communication and Ethics in Society. 2021;19(3):329-44.
+[40] Wiener N. The Human Use of Human Beings: Cybernetics and Society. 2nd ed. Houghton Mifﬂin;
+1950.
+[41] Moor JH. Just consequentialism and computing. Ethics and Information Technology. 1999;1(1):65-9.
+[42] Floridi L. Information ethics: On the philosophical foundation of computer ethics. Computer Ethics.
+1999;1:37-56.
+[43] Ryan RM, Curren RR, Deci EL. What humans need: Flourishing in Aristotelian philosophy and self-
+determination theory. In: Waterman AS, editor. The Best within Us: Positive Psychology Perspectives
+on Eudaimonia. American Psychological Association; 2013. p. 57-75.
+[44] Peters D, Calvo RA, Ryan RM. Designing for motivation, engagement and wellbeing in digital experi-
+ence. Frontiers in Psychology. 2018;9.
+[45] for Standardization IO. ISO/IEC 29184:2020; 2020. Available from: https://www.iso.org/
+standard/70331.html.
+[46] Pandit HJ, Krog GP . Comparison of notice requirements for consent between ISO/IEC 29184: 2020 and
+General Data Protection Regulation. Journal of Data Protection & Privacy. 2021;4(2):193-204.
+[47] Pandit HJ. Data Privacy V ocabulary ({{DPV)}}: Concepts for Legal Compliance; 2022.
+[48] Ryan P , Pandit HJ, Brennan R. In: A Common Semantic Model of the GDPR Register of Processing
+Activities; 2020. ArXiv:2102.00980 [cs]. Available from:http://arxiv.org/abs/2102.00980.
+[49] Debruyne C, Riggio J, De Troyer O, O’Sullivan D. An Ontology for Representing and Annotating
+X. Doan et al. / Legal-Ethical Challenges and Technological Solutions252"
+Legal-Ethical_Challenges_and_Technological_Solutio.pdf,11,"Data Flows to Facilitate Compliance V eriﬁcation. In: 2019 13th International Conference on Research
+Challenges in Information Science (RCIS). IEEE; 2019. p. 1-6.
+[50] Palmirani M, Martoni M, Rossi A, Bartolini C, Robaldo L. Legal ontology for modelling GDPR con-
+cepts and norms. In: Legal Knowledge and Information Systems. IOS Press; 2018. p. 91-100.
+[51] Pandit HJ, Esteves B. Enhancing Data Use Ontology (DUO) for Health-Data Sharing by Extending
+it with ODRL and DPV;. Preprint on webpage at https://www.semantic-web-journal.net/
+system/files/swj3127.pdf.
+[52] Lawson J, Cabili MN, Kerry G, Boughtwood T, Thorogood A, Alper P , et al. The Data Use Ontology to
+streamline responsible access to human biomedical datasets. Cell Genomics. 2021;1(2):100028.
+[53] V ajda J, Otte JN, Stansbury C, Manion FJ, Umberﬁeld E, He Y , et al. Coordinated evolution of ontologies
+of informed consent. ICBO. 2018.
+[54] Dolin RH, Alschuler L, Beebe C, Biron PV , Boyer SL, Essin D, et al. The HL7 clinical document
+architecture. Journal of the American Medical Informatics Association. 2001;8(6):552-69.
+[55] Kalra D, Beale T, Heard S. The openEHR foundation. Studies in health technology and informatics.
+2005;115:153-73.
+[56] Human S, Pandit HJ, Morel V , Santos C, Degeling M, Rossi A, et al. Data Protection and Consent-
+ing Communication Mechanisms: Current Open Proposals and Challenges. In: 2022 IEEE European
+Symposium on Security and Privacy Workshops (EuroS&PW). IEEE; 2022. p. 231-9.
+[57] Schwartz A. Looking back at P3P: lessons for the future. Center for Democracy & Technology. 2009.
+[58] Liu B, Andersen MS, Schaub F, Almuhimedi H, Zhang S, Sadeh N, et al. Follow My Recommenda-
+tions: A Personalized Privacy Assistant for Mobile App Permissions. In: Zurko ME, Consolvo S, Smith
+M, editors. Proceedings of the Twelfth Symposium on Usable Privacy and Security (SOUPS). Denver:
+USENIX; 2016. p. 27-41.
+[59] Das A, Degeling M, Smullen D, Sadeh N. Personalized privacy assistants for the internet of things:
+Providing users with notice and choice. IEEE Pervasive Computing. 2018;17(3):35-46.
+[60] Carter SE. A V alue-Centered Exploration of Data Privacy and Personalized Privacy Assistants. Digital
+Society. 2022;1(27):1-24. Available from:https://doi.org/10.1007/s44206-022-00028-w .
+[61] Carter SE, Tiddi I, Spagnuelo D. A “Mock App Store” Interface for Virtual Privacy Assistants. In:
+Schlobach S, P´erez-Ortiz M, Tielman M, editors. HHAI2022: Augmenting Human Intellect: Proceed-
+ings of the First International Conference on Hybrid Human-Artiﬁcial Intelligence. IOS Press; 2022. p.
+266-8. Available from:978-1-64368-309-6.
+[62] Kaye J, Whitley EA, Lund D, Morrison M, Teare H, Melham K. Dynamic consent: a patient interface
+for twenty-ﬁrst century research networks. European journal of human genetics. 2015;23(2):141-6.
+[63] Haas MA, Teare H, Prictor M, Ceregra G, Vidgen ME, Bunker D, et al. ‘CTRL ’: an online, Dynamic
+Consent and participant engagement platform working towards solving the complexities of consent in
+genomic research. European Journal of Human Genetics. 2021;29(4):687-98.
+[64] Mascalzoni D, Melotti R, Pattaro C, Pramstaller PP , G¨ogele M, De Grandi A, et al. Ten years of dynamic
+consent in the CHRIS study: informed consent as a dynamic process. European Journal of Human
+Genetics. 2022;30(12):1391-7.
+[65] Prictor M, Huebner S, Teare HJ, Burchill L, Kaye J. Australian Aboriginal and Torres Strait Islander
+collections of genetic heritage: the legal, ethical and practical considerations of a dynamic consent ap-
+proach to decision making. Journal of Law, Medicine & Ethics. 2020;48(1):205-17.
+[66] Doan XC, Selzer A, Rossi A, Botes WM, Lenzini G. Conciseness, interest, and unexpectedness: User
+attitudes towards infographic and comic consent mediums. In: Web Conference Companion V olume
+(ACM). ACM; 2022. .
+X. Doan et al. / Legal-Ethical Challenges and Technological Solutions 253"
+Open_Multiple_Adjunct_Decision_Support_at_the_Time.pdf,1,"Open, Multiple, Adjunct. Decision Support
+at the Time of Relational AI
+Federico CABITZAa,1 and Chiara NA T ALIb
+a University of Milano-Bicocca, IRCCS Istituto Ortopedico Galeazzi
+b University of Milan, University Vita-Salute San Raffaele
+Abstract. In this paper, we consider some key characteristics that AI should exhibit
+to enable hybrid agencies that include subject-matter experts and their AI-enabled
+decision aids. We will hint at the design requirements of guaranteeing that AI tools
+are:open, multiple, continuous, cautious, vague, analogical and, most importantly,
+adjunct with respect to decision-making practices. We will argue that especially
+adjunction is an important condition to design for.Adjunction entails the design
+and evaluation ofhuman-AI interaction protocolsaimed at improving AI usability,
+while also guaranteeing user satisfaction and human and social sustainability. It
+does so by boosting people’s cognitive motivation for interacting analytically with
+the outputs, reducing overreliance on AI and improving performance.
+Keywords. Relational Artiﬁcial Intelligence, Decision support, Machine Learning,
+Interaction protocols, Usability
+Nearly 25 years ago, Giorgio De Michelis [1] wrote a little book in Italian, titled
+“Aperto, molteplice, continuo: gli artefatti alla ﬁne del Novecento” (Open, multiple, con-
+tinuous: artifacts at the end of the Twentieth century), where he adopted a phenomeno-
+logical stance in regard to the design of artifacts, in particular digital artifacts, and their
+use. Today, we believe that these aesthetic categories should be taken again in considera-
+tion in regard to the design of Human-AI Interaction models. We will make a point that,
+in order to both exhibit artiﬁcial intelligence (i.e. autonomy in producing effective be-
+haviors in front of partly unexpected situations) and promote augmented intelligence (in
+decision makers facing the very same unexpected situations), ML-based decision support
+systems must be: open, multiple, continuous, cautious, vague, analogical and adjunct.
+An open system is conﬁgured as an open loop, capable of updating its reference data
+and, consequently, its correlative models, so as to cope with ever-changing environments
+and mitigate the risk of errors due to concept drift. [2]
+Multiplesystems provide users with several complementary indications or even possibly
+identical and diverging pieces of advice by different competing models, instead of single
+pieces of advice and clear-cut categories.
+Acontinuous decision support system allows for the exploration of the causal factors,
+possible explanations and effects on their output, deriving from a full range of small
+(counterfactual) differences in the digital representation of those instances and cases.
+Acautious system expresses a judgment only when its conﬁdence is sufﬁciently high, or
+above a threshold that depends on task criticality, the risk of failure, or users’ expertise
+and preferences, abstaining in all other cases. [3].
+1Corresponding Author: Federico Cabitza; E-mail: federico.cabitza@unimib.it
+HHAI2022: Augmenting Human Intellect
+S. Schlobach et al. (Eds.)
+© 2022 The authors and IOS Press.
+This article is published online with Open Access by IOS Press and distributed under the terms
+of the Creative Commons Attribution Non-Commercial License 4.0 (CC BY-NC 4.0).
+doi:10.3233/FAIA220204
+243"
+Open_Multiple_Adjunct_Decision_Support_at_the_Time.pdf,2,"A vague system, as in the case of multiplicity, does not limit itself in providing one best
+option, but rather promotes reﬂection in expert users by proposing multiple pertinent
+classes for the case at hand, guaranteeing high conﬁdence in that the list or interval of
+values given contains the right answer, like inconformal prediction settings.
+Analogical systems try to foster analogical thinking in experts by presenting to them the
+most (or the least) similar cases to the case at hand, according to their correlative models
+and some similarity metric [4], and by inviting the users to reﬂect on what answer such
+similarity (or dissimilarity) could suggest [5].
+Reﬂectivesystems, instead, promote reﬂection by matching their advice with questions
+that challenge users about their own conﬁdence, and promote counter-factual reasoning
+or the pursuing of alternative options.
+Finally, a theory ofadjunction invites to focus on the process-oriented and relational
+aspects of the joint action of humans and machines working together. This entails the
+evaluation ofhuman-plus-machine systems as a whole, recognizing both the coopera-
+tive nature of decision-making [6] and the distributed nature of cognition. In adjunction,
+human-AI interaction protocols are conceived to purposefully move the AI support to
+the background or to a role of “second opinion” giver [7] after that an ofﬁcial (and reg-
+istered) decision has been already made by single human decision makers or by small
+teams of decision makers, who take ultimate responsibility for their decisions. [8]
+Human-centered AI, when aimed at smoothing out every instance of friction from
+our course of action, harbors the risk of engendering a gradual yet unavoidable deskilling
+and degradation of the human attributes we value most in decision making: autonomy, in-
+tuition, and accountability [9,10]. If AI does have a detrimental inﬂuence on the attitude
+and learning processes of users, changing our minds, as users, is simpler than changing
+the AI itself. Raising awareness of the risks of automation is more straightforward than
+creating an ever more explicable, ethical or responsible AI, whatever this might mean.
+While efﬁcient AI aims to accelerate workﬂows and reduce relational friction, Adjunct
+AI can be given an opposing duty: slowing decision-makers down, making task fulﬁll-
+ment difﬁcult or cumbersome, or even hindering people from performing a certain ac-
+tion [10]. The main goal behind theseprogrammed inefﬁciencies [11] is fostering con-
+structive distrust [12] by arousing critical thinking, shattering the false impression of ob-
+jectivity provided by algorithms, seeding questions about the outcome, nudging the user
+to look for more conclusive proof and fostering a sense of personal responsibility. Such
+cognitive-forcing functions would boost people’s cognitive motivation for interacting an-
+alytically with the outputs, reducing overreliance on AI and improving performance. [13]
+In this contribution we presented some essential design-oriented concepts, and ar-
+gued about their deeper signiﬁcance for the design of effective, satisfactory and sustain-
+able human-AI interaction. Instead of evaluating technology in isolation, we should con-
+sider the interaction protocol as a whole, assessing the entire socio-technical system that
+adopts and deploys the AI, in terms of efﬁciency, efﬁcacy, the satisfaction of both users
+and those affected, human sustainability and cost-effectiveness. The attributesopen, mul-
+tiple, continuous, cautious, vague, analogical, reﬂective and adjunct provide us a sufﬁ-
+ciently narrow and practical list of system capabilities in order to evaluate, design and
+even legally deﬁne human - AI interaction protocols through which ahumachine system
+can exhibit some form of hybrid intelligence that is functional to some aim and sustain-
+able in the long run.
+F . Cabitza and C. Natali / Open, Multiple, Adjunct244"
+Open_Multiple_Adjunct_Decision_Support_at_the_Time.pdf,3,"References
+[1] De Michelis G. Aperto, molteplice, continuo: gli artefatti alla ﬁne del Novecento. Zanichelli, Milano;
+1998.
+[2] Zenisek J, Holzinger F, Affenzeller M. Machine learning based concept drift detection for predictive
+maintenance. Computers & Industrial Engineering. 2019;137:106031.
+[3] Campagner A, Cabitza F, Ciucci D. Three–way classiﬁcation: Ambiguity and abstention in machine
+learning. In: International Joint Conference on Rough Sets. Springer; 2019. p. 280-94.
+[4] Keane M. Analogical mechanisms. Artiﬁcial Intelligence Review. 1988;2(4):229-51.
+[5] Baselli G, Codari M, Sardanelli F. Opening the black box of machine learning in radiology: can the
+proximity of annotated cases be a way? European Radiology Experimental. 2020;4(1):1-7.
+[6] Sloman S, Fernbach P . The Knowledge Illusion: Why We Never Think Alone. Penguin; 2017.
+[7] Cabitza F. Biases affecting human decision making in AI-supported second opinion settings. In: Inter-
+national Conference on Modeling Decisions for Artiﬁcial Intelligence. Springer; 2019. p. 283-94.
+[8] Skitka LJ, Mosier K, Burdick MD. Accountability and automation bias. International Journal of Human-
+Computer Studies. 2000;52(4):701-17.
+[9] Frischmann B, Selinger E. Re-engineering humanity. Cambridge University Press; 2018.
+[10] Farindon P . Cabitza, Federico. In: Pelillo M, Scantamburlo T, editors. Cobra AI: Exploring Some
+Unintended Consequences. MIT Press; 2021. p. 87-104.
+[11] Cabitza F, Campagner A, Ciucci D, Seveso A. Programmed inefﬁciencies in DSS-supported human de-
+cision making. In: International Conference on Modeling Decisions for Artiﬁcial Intelligence. Springer;
+2019. p. 201-12.
+[12] Hildebrandt M. Privacy as protection of the incomputable self: From agnostic to agonistic machine
+learning. Theoretical Inquiries in Law. 2019;20(1):83-121.
+[13] Buc ¸inca Z, Malaya MB, Gajos KZ. To trust or to think: cognitive forcing functions can reduce overre-
+liance on AI in AI-assisted decision-making. Proceedings of the ACM on Human-Computer Interaction.
+2021;5(CSCW1):1-21.
+F. Cabitza and C. Natali / Open, Multiple, Adjunct 245"
